@@ -1,4 +1,4 @@
-# VeraDoc stack: Postgres, Redis, FastAPI, Celery worker.
+# VeraDoc stack: Postgres + FastAPI (verification runs in-process via BackgroundTasks).
 # 1) cp .env.example .env  and fill secrets (JWT_SECRET, GROQ_API_KEY, SQUAD_SECRET_KEY, …)
 # 2) docker compose up --build
 # 3) API: http://localhost:8000  — set SQUAD_WEBHOOK_CALLBACK_URL to a URL Squad can reach (e.g. ngrok) for webhooks.
@@ -20,25 +20,12 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   api:
     build: .
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/veradoc
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
     ports:
       - "8000:8000"
     volumes:
@@ -46,31 +33,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     command: >
       sh -c "alembic upgrade head &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000"
-
-  worker:
-    build: .
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/veradoc
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-    volumes:
-      - storage_data:/app/storage
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: >
-      sh -c "alembic upgrade head &&
-      celery -A app.tasks.celery_app:celery_app worker -l INFO"
 
 volumes:
   postgres_data:

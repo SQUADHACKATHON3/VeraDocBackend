@@ -12,9 +12,8 @@ class Settings(BaseSettings):
 
     database_url: str
 
-    redis_url: str
-    celery_broker_url: str
-    celery_result_backend: str
+    redis_url: str | None = None
+    """Optional. e.g. Render Key Value / Redis URL for caching or rate limits. Omitted = Redis disabled."""
 
     squad_base_url: str = "https://sandbox-api-d.squadco.com"
     squad_secret_key: str
@@ -35,6 +34,10 @@ class Settings(BaseSettings):
 
     file_storage_driver: str = "local"
     local_storage_dir: str = "./storage"
+    """Use `local` (disk) or `cloudinary` for uploads."""
+
+    cloudinary_url: str | None = None
+    """Set `CLOUDINARY_URL` from the Cloudinary dashboard when `file_storage_driver` is `cloudinary`."""
 
 
 settings = Settings()  # type: ignore[call-arg]

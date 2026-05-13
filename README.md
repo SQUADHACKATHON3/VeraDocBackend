@@ -16,12 +16,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3) Run Postgres + Redis (Docker)
+### 3) Run Postgres (Docker)
 
 ```bash
 docker run --name veradoc-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=veradoc -p 5432:5432 -d postgres:16
-docker run --name veradoc-redis -p 6379:6379 -d redis:7
 ```
+
+Verification jobs run inside the API process after each request returns (FastAPI `BackgroundTasks`); no Redis or Celery worker is required.
 
 ### 4) Migrate DB
 
@@ -33,12 +34,6 @@ alembic upgrade head
 
 ```bash
 uvicorn app.main:app --reload --port 8000
-```
-
-### 6) Run worker
-
-```bash
-celery -A app.tasks.celery_app worker -l info
 ```
 
 ## API

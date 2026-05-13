@@ -7,7 +7,6 @@ from app.db.session import SessionLocal
 from app.models.verification import Verdict, Verification, VerificationStatus
 from app.services.groq_analyzer import analyze_document
 from app.services.storage import read_storage_key
-from app.tasks.celery_app import celery_app
 
 
 def _run(db: Session, verification_id: UUID) -> None:
@@ -37,11 +36,13 @@ def _run(db: Session, verification_id: UUID) -> None:
         db.commit()
 
 
-@celery_app.task(name="veradoc.run_verification")
-def run_verification(verification_id: str) -> None:
+def process_verification(verification_id: str) -> None:
+    """
+    Runs the verification pipeline in a worker thread (via FastAPI BackgroundTasks).
+    Same DB/session pattern as before; no Celery or Redis required.
+    """
     db = SessionLocal()
     try:
         _run(db, UUID(verification_id))
     finally:
         db.close()
-

@@ -1,4 +1,4 @@
-# VeraDoc API + Celery worker (same image)
+# VeraDoc API (verification runs in-process via FastAPI BackgroundTasks)
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update \

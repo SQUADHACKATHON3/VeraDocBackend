@@ -1,9 +1,19 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.routes import auth, credits, user, verifications, verify
+from app.services.redis_client import close_redis
 
-app = FastAPI(title="VeraDoc API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    yield
+    close_redis()
+
+
+app = FastAPI(title="VeraDoc API", version="1.0.0", lifespan=lifespan)
 
 
 @app.exception_handler(Exception)

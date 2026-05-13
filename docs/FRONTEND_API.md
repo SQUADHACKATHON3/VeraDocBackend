@@ -226,7 +226,7 @@ await fetch(`${BASE}/api/verify/initiate`, {
 }
 ```
 
-Processing runs **asynchronously** (Celery). Poll **§3.2** with `verificationId`.
+Processing runs **asynchronously** after the HTTP response returns (in-process background task). Poll **§3.2** with `verificationId`.
 
 **Errors**
 

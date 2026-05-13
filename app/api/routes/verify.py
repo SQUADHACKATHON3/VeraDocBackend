@@ -1,7 +1,7 @@
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,8 +12,8 @@ from app.models.verification import PaymentStatus, Verification, VerificationSta
 from app.models.webhook_event import WebhookEvent
 from app.schemas.verification import InitiateOut, StatusOut
 from app.services.squad import SquadClient, verify_squad_signature
-from app.services.storage import save_upload_locally
-from app.tasks.verification_tasks import run_verification
+from app.services.storage import save_upload
+from app.tasks.verification_tasks import process_verification
 
 router = APIRouter(prefix="/api/verify", tags=["verify"])
 
@@ -23,6 +23,7 @@ MAX_SIZE_BYTES = 5 * 1024 * 1024
 
 @router.post("/initiate", response_model=InitiateOut)
 async def initiate(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -30,7 +31,7 @@ async def initiate(
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="Invalid file type. Accepted: PDF, JPG, PNG, JPEG")
 
-    storage_key, size_bytes = save_upload_locally(file)
+    storage_key, size_bytes = save_upload(file)
     if size_bytes > MAX_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File size exceeds 5MB limit")
 
@@ -62,13 +63,17 @@ async def initiate(
     db.commit()
     db.refresh(verification)
 
-    run_verification.delay(str(verification.id))
+    background_tasks.add_task(process_verification, str(verification.id))
 
     return InitiateOut(verificationId=verification.id, creditsRemaining=u.credits)
 
 
 @router.post("/webhook")
-async def squad_webhook(request: Request, db: Session = Depends(get_db)) -> dict:
+async def squad_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
     raw = await request.body()
     sig = request.headers.get("x-squad-signature")
     sig_valid = verify_squad_signature(raw, sig)
@@ -149,7 +154,7 @@ async def squad_webhook(request: Request, db: Session = Depends(get_db)) -> dict
     db.add(verification)
     db.commit()
 
-    run_verification.delay(str(verification.id))
+    background_tasks.add_task(process_verification, str(verification.id))
     return {"received": True}
 
 
