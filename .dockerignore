@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+.venv-*
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+*.md
+storage/
+.cursor
+agent-tools
+**/__pycache__
