@@ -43,6 +43,15 @@ class SquadClient:
             return resp.json()
 
 
+def squad_verify_response_indicates_success(verify_resp: dict[str, Any]) -> bool:
+    """True if Squad transaction verify payload reports a successful payment."""
+    data = verify_resp.get("data")
+    if not isinstance(data, dict):
+        data = verify_resp if isinstance(verify_resp, dict) else {}
+    status_value = data.get("transaction_status")
+    return str(status_value).lower() == "success"
+
+
 def squad_webhook_hmac_hex_upper(raw_body: bytes) -> str:
     """HMAC-SHA512 of raw webhook body, hex uppercase (Squad `x-squad-encrypted-body`)."""
     secret = settings.squad_secret_key.encode("utf-8")

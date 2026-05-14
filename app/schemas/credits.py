@@ -24,3 +24,19 @@ class CreditPurchaseInitiateOut(BaseModel):
     checkoutUrl: str
     credits: int
     amountKobo: int
+
+
+class CreditPurchaseStatusOut(BaseModel):
+    purchaseId: uuid.UUID
+    status: str
+    credits: int
+
+
+class CreditPurchaseVerifyOut(CreditPurchaseStatusOut):
+    """Response from POST /purchases/{id}/verify."""
+
+    paymentConfirmed: bool | None = None
+    """True if Squad reports success and purchase is completed; False if still pending or not paid yet."""
+
+    alreadyCompleted: bool = False
+    """True if this purchase was already completed before this call (no Squad verify needed)."""

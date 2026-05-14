@@ -163,24 +163,18 @@ Display amounts to users as **₦ (amountKobo / 100)**.
 2. In the **Squad merchant dashboard**, configure the **webhook / IPN** URL to this API’s **`POST /api/verify/webhook`** (full public HTTPS URL, e.g. `https://api.your-app.com/api/verify/webhook`). Squad’s servers POST there to confirm payment; credits update on the server.
 3. Call initiate → receive `checkoutUrl` and `purchaseId`.
 4. Open `checkoutUrl` (new tab, WebView, or redirect).
-5. On your `/credits/callback` page, poll **`GET /api/credits/purchases/{purchaseId}?reconcile=true`** (see section 2.3) until `status` is `completed`, or poll **`GET /api/auth/me`** until credits increase. Use `reconcile=true` at least once after checkout so a missed Squad webhook can still finalize the purchase.
+5. On your `/credits/callback` page, call **`POST /api/credits/purchases/{purchaseId}/verify`** (section 2.4) after checkout, then poll **`GET /api/credits/purchases/{purchaseId}`** until `status` is `completed`, or poll **`GET /api/auth/me`** until credits increase. The verify endpoint talks to Squad the same way the webhook does when confirming payment.
 
 **Errors:** `400` — invalid pack. `503` — credit purchase not configured (`SQUAD_CALLBACK_URL` missing).
 
 ---
 
-### 2.3 Purchase status
+### 2.3 Purchase status (read-only)
 
 `GET /api/credits/purchases/{purchase_id}`  
 **Auth:** Bearer (must own the purchase)
 
-**Query**
-
-| Param | Default | Notes |
-|--------|---------|--------|
-| `reconcile` | `false` | If `true` and status is still `pending`, the server calls Squad’s verify API once and completes the purchase when payment succeeded (covers delayed or failed webhooks). |
-
-**200 response:**
+**200 response (`CreditPurchaseStatusOut`):**
 
 ```json
 {
@@ -193,6 +187,54 @@ Display amounts to users as **₦ (amountKobo / 100)**.
 `status`: `pending` | `completed` | `failed`
 
 **Errors:** `404` — not found or not yours.
+
+---
+
+### 2.4 Confirm purchase with Squad (verify)
+
+`POST /api/credits/purchases/{purchase_id}/verify`  
+**Auth:** Bearer (must own the purchase)  
+**Body:** none
+
+Calls Squad’s **transaction verify** API for this purchase’s `transaction_ref` (the purchase UUID). If Squad reports success, the server grants credits and sets status to **`completed`** (same logic as **`POST /api/verify/webhook`** when the webhook runs).
+
+**200 response (`CreditPurchaseVerifyOut`) — paid and completed this call:**
+
+```json
+{
+  "purchaseId": "uuid-string",
+  "status": "completed",
+  "credits": 5,
+  "paymentConfirmed": true,
+  "alreadyCompleted": false
+}
+```
+
+**200 — already completed earlier (idempotent):**
+
+```json
+{
+  "purchaseId": "uuid-string",
+  "status": "completed",
+  "credits": 5,
+  "paymentConfirmed": true,
+  "alreadyCompleted": true
+}
+```
+
+**200 — Squad has not confirmed success yet (still pending):**
+
+```json
+{
+  "purchaseId": "uuid-string",
+  "status": "pending",
+  "credits": 5,
+  "paymentConfirmed": false,
+  "alreadyCompleted": false
+}
+```
+
+**Errors:** `404` — not found or not yours. `400` — purchase is in `failed` state. `502` — Squad verify HTTP request failed.
 
 ---
 
@@ -445,7 +487,7 @@ The SPA **must not** pretend to be Squad. The webhook URL must be a **public HTT
 1. `POST /api/verify/initiate` → **402** → show “Buy credits”.
 2. `GET /api/credits/packs` for prices.
 3. `POST /api/credits/purchase/initiate` → open `checkoutUrl`.
-4. After payment, poll `GET /api/auth/me` until `credits` increases.
+4. After payment, `POST /api/credits/purchases/{purchaseId}/verify`, then poll `GET /api/credits/purchases/{purchaseId}` or `GET /api/auth/me` until credits increase.
 5. Retry verify.
 
 ### C) Session refresh

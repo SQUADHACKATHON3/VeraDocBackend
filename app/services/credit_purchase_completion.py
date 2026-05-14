@@ -1,4 +1,4 @@
-"""Finalize Squad-backed credit purchases (shared by webhook and client reconcile)."""
+"""Finalize Squad-backed credit purchases (shared by webhook and POST /purchases/.../verify)."""
 
 from uuid import UUID
 

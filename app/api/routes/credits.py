@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -12,9 +12,11 @@ from app.schemas.credits import (
     CreditPackOut,
     CreditPurchaseInitiateIn,
     CreditPurchaseInitiateOut,
+    CreditPurchaseStatusOut,
+    CreditPurchaseVerifyOut,
 )
 from app.services.credit_purchase_completion import complete_pending_credit_purchase_by_id
-from app.services.squad import SquadClient
+from app.services.squad import SquadClient, squad_verify_response_indicates_success
 
 router = APIRouter(prefix="/api/credits", tags=["credits"])
 
@@ -78,36 +80,72 @@ async def initiate_credit_purchase(
     )
 
 
-@router.get("/purchases/{purchase_id}", response_model=dict)
-async def purchase_status(
+@router.post("/purchases/{purchase_id}/verify", response_model=CreditPurchaseVerifyOut)
+async def verify_credit_purchase(
     purchase_id: UUID,
-    reconcile: bool = Query(
-        False,
-        description="If true and purchase is still pending, verify payment with Squad once and complete if paid.",
-    ),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> dict:
+) -> CreditPurchaseVerifyOut:
+    """
+    Ask Squad whether this purchase was paid, then grant credits if so.
+    Same outcome as the Squad webhook when it fires; use after redirect from checkout if polling status.
+    """
     p = db.get(CreditPurchase, purchase_id)
     if not p or p.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase not found")
 
-    if reconcile and p.status == CreditPurchaseStatus.pending:
-        try:
-            squad = SquadClient()
-            verify_resp = await squad.verify_transaction(transaction_ref=str(purchase_id))
-            data = verify_resp.get("data")
-            if not isinstance(data, dict):
-                data = verify_resp if isinstance(verify_resp, dict) else {}
-            status_value = data.get("transaction_status")
-            if str(status_value).lower() == "success":
-                p2 = complete_pending_credit_purchase_by_id(db, purchase_id)
-                if p2:
-                    p = p2
-        except Exception:
-            pass
+    if p.status == CreditPurchaseStatus.completed:
+        return CreditPurchaseVerifyOut(
+            purchaseId=p.id,
+            status=p.status.value,
+            credits=p.credits_granted,
+            alreadyCompleted=True,
+            paymentConfirmed=True,
+        )
 
-    p = db.get(CreditPurchase, purchase_id)
-    if not p:
+    if p.status == CreditPurchaseStatus.failed:
+        raise HTTPException(status_code=400, detail="This purchase failed; start a new checkout.")
+
+    try:
+        squad = SquadClient()
+        verify_resp = await squad.verify_transaction(transaction_ref=str(purchase_id))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Squad verify request failed: {e!s}") from e
+
+    if not squad_verify_response_indicates_success(verify_resp):
+        return CreditPurchaseVerifyOut(
+            purchaseId=p.id,
+            status=p.status.value,
+            credits=p.credits_granted,
+            paymentConfirmed=False,
+            alreadyCompleted=False,
+        )
+
+    p2 = complete_pending_credit_purchase_by_id(db, purchase_id)
+    p_final = p2 or db.get(CreditPurchase, purchase_id)
+    if not p_final:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase not found")
-    return {"purchaseId": str(p.id), "status": p.status.value, "credits": p.credits_granted}
+
+    return CreditPurchaseVerifyOut(
+        purchaseId=p_final.id,
+        status=p_final.status.value,
+        credits=p_final.credits_granted,
+        paymentConfirmed=p_final.status == CreditPurchaseStatus.completed,
+        alreadyCompleted=False,
+    )
+
+
+@router.get("/purchases/{purchase_id}", response_model=CreditPurchaseStatusOut)
+def purchase_status(
+    purchase_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CreditPurchaseStatusOut:
+    p = db.get(CreditPurchase, purchase_id)
+    if not p or p.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase not found")
+    return CreditPurchaseStatusOut(
+        purchaseId=p.id,
+        status=p.status.value,
+        credits=p.credits_granted,
+    )

@@ -11,7 +11,7 @@ from app.models.credit_purchase import CreditPurchase, CreditPurchaseStatus
 from app.models.verification import PaymentStatus, Verification, VerificationStatus
 from app.models.webhook_event import WebhookEvent
 from app.services.credit_purchase_completion import complete_pending_credit_purchase_by_id
-from app.services.squad import SquadClient, verify_squad_webhook_authentic
+from app.services.squad import SquadClient, squad_verify_response_indicates_success
 from app.tasks.verification_tasks import process_verification
 
 
@@ -71,11 +71,7 @@ async def handle_squad_charge_webhook(
         try:
             squad = SquadClient()
             verify_resp = await squad.verify_transaction(transaction_ref=transaction_ref)
-            data = verify_resp.get("data")
-            if not isinstance(data, dict):
-                data = verify_resp if isinstance(verify_resp, dict) else {}
-            status_value = data.get("transaction_status")
-            if str(status_value).lower() != "success":
+            if not squad_verify_response_indicates_success(verify_resp):
                 return {"received": True}
         except Exception:
             return {"received": True}
@@ -90,11 +86,7 @@ async def handle_squad_charge_webhook(
     try:
         squad = SquadClient()
         verify_resp = await squad.verify_transaction(transaction_ref=transaction_ref)
-        data = verify_resp.get("data")
-        if not isinstance(data, dict):
-            data = verify_resp if isinstance(verify_resp, dict) else {}
-        status_value = data.get("transaction_status")
-        if str(status_value).lower() != "success":
+        if not squad_verify_response_indicates_success(verify_resp):
             return {"received": True}
     except Exception:
         return {"received": True}
