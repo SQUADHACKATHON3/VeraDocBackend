@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class InitiateOut(BaseModel):
@@ -15,6 +15,8 @@ class StatusOut(BaseModel):
     verdict: str | None = None
     trustScore: int | None = None
     summary: str | None = None
+    error: str | None = Field(None, description="Short message when status is error")
+    errorDetail: str | None = Field(None, description="Server failure detail when status is error")
 
 
 class VerificationListItem(BaseModel):

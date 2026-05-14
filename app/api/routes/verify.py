@@ -121,9 +121,22 @@ def status_poll(
         raise HTTPException(status_code=404, detail="Verification not found")
     if v.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    ai: dict = v.ai_output if isinstance(v.ai_output, dict) else {}
+    err: str | None = None
+    err_detail: str | None = None
+    if v.status == VerificationStatus.error:
+        e = ai.get("error")
+        err = str(e) if e is not None else "AI analysis failed"
+        d = ai.get("detail")
+        if d is not None:
+            err_detail = str(d)[:4000]
+
     return StatusOut(
         status=v.status.value,
         verdict=v.verdict.value if v.verdict else None,
         trustScore=v.trust_score,
         summary=v.summary,
+        error=err,
+        errorDetail=err_detail,
     )

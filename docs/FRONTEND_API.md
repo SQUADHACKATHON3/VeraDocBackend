@@ -318,7 +318,20 @@ Send the user to **§2.2** when you get `402`.
 
 `status` values: `pending` | `processing` | `complete` | `error`
 
-When `status` is `complete`, `verdict`, `trustScore`, and `summary` are usually set. On `error`, verdict/score/summary may stay `null` — load the **detail** endpoint or handle empty.
+When `status` is `complete`, `verdict`, `trustScore`, and `summary` are usually set.
+
+When `status` is `error`, the response includes **`error`** (short code) and **`errorDetail`** (server message, e.g. missing Poppler, Groq error, invalid PDF) so you can show the user or log without calling the detail endpoint.
+
+```json
+{
+  "status": "error",
+  "verdict": null,
+  "trustScore": null,
+  "summary": null,
+  "error": "AI analysis failed",
+  "errorDetail": "PDF conversion requires Poppler (pdftoppm) on the server. ..."
+}
+```
 
 **Errors:** `404`, `403` (wrong user).
 

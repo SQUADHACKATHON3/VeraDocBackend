@@ -182,16 +182,50 @@ def _maybe_apply_hybrid(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _bytes_to_base64_jpeg(image_bytes: bytes) -> str:
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+# Vision APIs (e.g. Groq) reject oversized payloads; PDF raster can be huge even when the PDF file is small.
+_VISION_MAX_EDGE_PX = 2048
+_VISION_JPEG_QUALITIES = (88, 80, 72, 64, 55)
+_VISION_BASE64_MAX_CHARS = 3_200_000
+
+
+def _pil_to_vision_jpeg_base64(img: Image.Image) -> str:
+    """Resize and compress so base64 stays within typical vision API limits."""
+    img = img.convert("RGB")
+    w, h = img.size
+    m = max(w, h)
+    if m > _VISION_MAX_EDGE_PX:
+        scale = _VISION_MAX_EDGE_PX / m
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=92)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+    out_b64: str = ""
+    for q in _VISION_JPEG_QUALITIES:
+        buf.seek(0)
+        buf.truncate(0)
+        img.save(buf, format="JPEG", quality=q, optimize=True)
+        out_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        if len(out_b64) <= _VISION_BASE64_MAX_CHARS:
+            break
+    if len(out_b64) > _VISION_BASE64_MAX_CHARS:
+        scale = 0.85
+        while len(out_b64) > _VISION_BASE64_MAX_CHARS and max(img.size) > 512:
+            w, h = img.size
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+            buf.seek(0)
+            buf.truncate(0)
+            img.save(buf, format="JPEG", quality=60, optimize=True)
+            out_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return out_b64
+
+
+def _bytes_to_base64_jpeg(image_bytes: bytes) -> str:
+    img = Image.open(io.BytesIO(image_bytes))
+    return _pil_to_vision_jpeg_base64(img)
 
 
 def _pdf_first_page_to_base64_jpeg(pdf_bytes: bytes) -> str:
     try:
-        pages = convert_from_bytes(pdf_bytes, first_page=1, last_page=1)
+        pages = convert_from_bytes(pdf_bytes, first_page=1, last_page=1, dpi=120)
     except (PDFInfoNotInstalledError, PopplerNotInstalledError) as e:
         raise RuntimeError(
             "PDF conversion requires Poppler (pdftoppm) on the server. "
@@ -206,10 +240,7 @@ def _pdf_first_page_to_base64_jpeg(pdf_bytes: bytes) -> str:
         raise
     if not pages:
         raise ValueError("PDF has no pages")
-    img = pages[0].convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=92)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+    return _pil_to_vision_jpeg_base64(pages[0])
 
 
 def _is_pdf_magic(file_bytes: bytes) -> bool:
