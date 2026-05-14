@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     hybrid_verdict_score_consistency: bool = True
     """When True, apply deterministic band checks on model verdict vs trust_score (reduces incoherent AUTHENTIC)."""
 
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+    """Comma-separated `Access-Control-Allow-Origin` values. Use your deployed frontend origin(s) in production."""
+
+    cors_allow_credentials: bool = True
+    """Set False if you use `cors_origins='*'` (browsers forbid credentials with wildcard origin)."""
+
 
 settings = Settings()  # type: ignore[call-arg]
 
