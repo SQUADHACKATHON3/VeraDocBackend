@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     cloudinary_url: str | None = None
     """Set `CLOUDINARY_URL` from the Cloudinary dashboard when `file_storage_driver` is `cloudinary`."""
 
+    verification_primary_region: str = "NG"
+    """Issuing context for prompts and search bias. Default Nigeria; later unlock other ISO-style codes (e.g. GH, KE)."""
+
+    hybrid_verdict_score_consistency: bool = True
+    """When True, apply deterministic band checks on model verdict vs trust_score (reduces incoherent AUTHENTIC)."""
+
 
 settings = Settings()  # type: ignore[call-arg]
 

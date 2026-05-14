@@ -9,12 +9,13 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import settings
+from app.services.forensic_hybrid import apply_verdict_score_band_consistency
 from app.services.issuer_contact_hints import build_issuer_contact_hints
 
 
-SYSTEM_PROMPT = """
+_FORENSIC_PROMPT_BASE = """
 You are VeraDoc, a forensic document verification AI specialized in detecting
-fake or tampered Nigerian academic certificates and transcripts.
+fake or tampered academic certificates and transcripts.
 
 Your ONLY job is to analyze the provided document image for signs of forgery,
 tampering, or inauthenticity.
@@ -30,7 +31,7 @@ no markdown, no preamble:
   "summary": "one sentence explanation of your verdict"
 }
 
-Analyze the following signals:
+Analyze the following signals (multimodal: layout, typography, imagery, and text coherence):
 - Font consistency across the entire document
 - Seal and watermark presence, placement, and quality
 - Formatting alignment and spacing regularity
@@ -39,6 +40,10 @@ Analyze the following signals:
 - Institution name spelling and official formatting patterns
 - Signature presence and placement
 - Overall document structural integrity
+- Consistency anomalies: contradictory dates, mismatched letterhead vs body fonts, implausible serial patterns
+
+Treat inconsistent seals, misaligned typography layers, impossible chronology, and template drift as
+consistency anomalies (similar in spirit to anomaly detection on document layout and metadata signals).
 
 Verdict guidelines:
 - AUTHENTIC (trust_score 75-100): All or most checks pass, no significant anomalies
@@ -51,11 +56,43 @@ Do NOT explain your reasoning outside the summary field.
 """.strip()
 
 
-ENTITY_EXTRACTION_PROMPT = """
+_REGION_BLOCK_NG = """
+Primary operational context: Nigeria — federal/state universities, polytechnics, colleges of education,
+WAEC/NECO-style awards, NYSC discharge or exemption documents where applicable, and common Nigerian
+registry / attestation wording. Prefer flags that cite specific Nigerian layout or naming cues when visible.
+
+If the document clearly appears issued for another country with no Nigerian contextual cues, add a flag
+such as "Regional context: issuer may be non-Nigeria" and lean SUSPICIOUS over AUTHENTIC unless forensic
+evidence is very strong (this product is Nigeria-first; cross-border documents need clearer proof).
+""".strip()
+
+
+_REGION_BLOCK_GENERAL = """
+Primary operational context: general international academic credentials (any country). Apply the same
+forensic and consistency-anomaly signals. When issuer region or jurisdiction is unclear, prefer SUSPICIOUS
+over AUTHENTIC without strong cross-field consistency.
+""".strip()
+
+
+def _forensic_system_prompt() -> str:
+    code = (settings.verification_primary_region or "NG").strip().upper()
+    region = _REGION_BLOCK_NG if code == "NG" else _REGION_BLOCK_GENERAL
+    return f"{_FORENSIC_PROMPT_BASE}\n\n{region}"
+
+
+def _entity_extraction_prompt() -> str:
+    ng = (settings.verification_primary_region or "NG").strip().upper() == "NG"
+    bias = (
+        "When visible cues suggest Nigeria (e.g. Nigerian institution names, Naira-era dates, WAEC/NYSC wording), "
+        "set country_or_region to Nigeria unless the document explicitly states otherwise."
+        if ng
+        else "Infer country_or_region from visible issuer address or language when reasonably clear; else null."
+    )
+    return f"""
 You extract factual labels visible on an academic certificate or transcript image.
 Return ONLY valid JSON with no markdown:
 
-{
+{{
   "institution_name": string or null,
   "document_title_or_type": string or null,
   "candidate_name": string or null,
@@ -63,15 +100,26 @@ Return ONLY valid JSON with no markdown:
   "serial_or_registration": string or null,
   "country_or_region": string or null,
   "other_notable_text": string or null
-}
+}}
 
+{bias}
 Use null if unknown or illegible. Keep strings short (under 200 chars each).
 """.strip()
 
 
-MERGE_WITH_WEB_PROMPT = """
+def _merge_system_prompt() -> str:
+    ng = (settings.verification_primary_region or "NG").strip().upper() == "NG"
+    web_bias = (
+        "For Nigerian issuers, weigh snippets from .edu.ng domains, federal ministry pages, and known Nigerian "
+        "regulatory sources more heavily than random blogs; still never treat web text alone as proof of authenticity."
+        if ng
+        else "Prefer official registrar or .ac / .edu primary sources over forums; web text is never sole proof."
+    )
+    return f"""
 You are VeraDoc. You combine (1) visual forensic analysis of a document with (2) optional web search snippets.
-Web results may be incomplete, outdated, or unrelated — treat them as hints, not proof.
+Web results may be incomplete, outdated, unrelated, or adversarial — treat them as hints with guardrails, not proof.
+
+{web_bias}
 
 Rules:
 - If web sources strongly contradict claims on the document (e.g. institution does not exist, known diploma mill), increase suspicion or mark FAKE with clear flags citing "web corroboration".
@@ -82,20 +130,20 @@ Rules:
 Also produce suggested_outreach_message in the SAME JSON response (one model call — no follow-up):
 - Plain text only, no markdown fences. Start with a line "Subject: ..." then a blank line, then the email body the end user can copy to send to the issuing institution.
 - Ground the letter in extracted_entities (institution, document type, candidate name, serial/registration/certificate ID, dates, region) and the forensic + web context. Never invent a serial or ID not present in extracted_entities; if missing, say it was not legible on the scan.
-- Tone: professional, neutral English (Nigerian context is fine). Ask the office to confirm authenticity and register match.
+- Tone: professional, neutral English (Nigerian context is fine when region is Nigeria). Ask the office to confirm authenticity and register match.
 - End with placeholder lines exactly: [Your full name] then [Your email or phone] on separate lines.
 - Length: roughly 120–450 words.
 
 Output ONLY this JSON shape (no markdown):
 
-{
+{{
   "verdict": "AUTHENTIC" or "SUSPICIOUS" or "FAKE",
   "trust_score": 0-100,
   "flags": [],
   "passed_checks": [],
   "summary": "one sentence",
   "suggested_outreach_message": "Subject: ...\\n\\nDear ...\\n\\n...\\n\\n[Your full name]\\n[Your email or phone]"
-}
+}}
 """.strip()
 
 
@@ -125,6 +173,12 @@ class ExtractedEntities(BaseModel):
     serial_or_registration: str | None = None
     country_or_region: str | None = None
     other_notable_text: str | None = None
+
+
+def _maybe_apply_hybrid(data: dict[str, Any]) -> dict[str, Any]:
+    if settings.hybrid_verdict_score_consistency:
+        return apply_verdict_score_band_consistency(data)
+    return data
 
 
 def _bytes_to_base64_jpeg(image_bytes: bytes) -> str:
@@ -166,7 +220,7 @@ def _forensic_vision(client: Groq, *, base64_jpeg: str) -> dict[str, Any]:
     resp = client.chat.completions.create(
         model=settings.groq_model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _forensic_system_prompt()},
             {
                 "role": "user",
                 "content": [
@@ -180,14 +234,14 @@ def _forensic_vision(client: Groq, *, base64_jpeg: str) -> dict[str, Any]:
     )
     text = (resp.choices[0].message.content or "").strip()
     parsed = _parse_json_object(text)
-    return GroqVerdict.model_validate(parsed).model_dump()
+    return _maybe_apply_hybrid(GroqVerdict.model_validate(parsed).model_dump())
 
 
 def _extract_entities_vision(client: Groq, *, base64_jpeg: str) -> dict[str, Any]:
     resp = client.chat.completions.create(
         model=settings.groq_model,
         messages=[
-            {"role": "system", "content": ENTITY_EXTRACTION_PROMPT},
+            {"role": "system", "content": _entity_extraction_prompt()},
             {
                 "role": "user",
                 "content": [
@@ -210,17 +264,20 @@ def _build_search_queries(entities: dict[str, Any]) -> list[str]:
     doc_type = (entities.get("document_title_or_type") or "").strip()
     region = (entities.get("country_or_region") or "").strip()
     serial = (entities.get("serial_or_registration") or "").strip()
+    ng = (settings.verification_primary_region or "NG").strip().upper() == "NG"
+    geo = "Nigeria" if ng else (region or "international")
 
     if inst:
-        qs.append(f"{inst} official university college Nigeria verification diploma certificate")
-        qs.append(f"{inst} accreditation Nigeria higher education")
+        qs.append(f"{inst} official university college verification diploma certificate {geo}")
+        qs.append(f"{inst} accreditation higher education {geo}")
     if doc_type and inst:
-        qs.append(f"{inst} {doc_type} Nigeria authentic sample")
+        qs.append(f"{inst} {doc_type} authentic sample {geo}")
     elif doc_type:
-        qs.append(f"{doc_type} Nigeria academic certificate verification")
+        qs.append(f"{doc_type} academic certificate verification {geo}")
 
     if serial and len(serial) > 3:
-        qs.append(f"{serial} certificate verification Nigeria WAEC NECO university")
+        reg_hint = "WAEC NECO university" if ng else "academic registry"
+        qs.append(f"{serial} certificate verification {reg_hint} {geo}")
 
     if region and region.lower() not in ("nigeria", "ng"):
         qs.append(f"{inst or doc_type} {region} education certificate")
@@ -257,7 +314,7 @@ Produce the final merged JSON verdict."""
     resp = client.chat.completions.create(
         model=settings.groq_model,
         messages=[
-            {"role": "system", "content": MERGE_WITH_WEB_PROMPT},
+            {"role": "system", "content": _merge_system_prompt()},
             {"role": "user", "content": user_text},
         ],
         temperature=0.15,
@@ -266,16 +323,20 @@ Produce the final merged JSON verdict."""
     text = (resp.choices[0].message.content or "").strip()
     parsed = _parse_json_object(text)
     try:
-        return GroqMergeOutput.model_validate(parsed).model_dump()
+        return _maybe_apply_hybrid(GroqMergeOutput.model_validate(parsed).model_dump())
     except ValidationError:
-        base = GroqVerdict.model_validate(parsed).model_dump()
+        base = _maybe_apply_hybrid(GroqVerdict.model_validate(parsed).model_dump())
         return {**base, "suggested_outreach_message": ""}
 
 
 def analyze_document(*, filename: str, content_type: str, file_bytes: bytes) -> dict[str, Any]:
     """
-    Full pipeline: forensic vision → optional Tavily searches from extracted entities → merged verdict.
-    If TAVILY_API_KEY is unset or search fails, returns forensic-only result (same shape as before).
+    Full pipeline: forensic vision (multimodal) → optional Tavily from extracted entities → merged verdict.
+
+    Region is controlled by ``verification_primary_region`` (default ``NG``). Optional Tavily step applies
+    web corroboration with merge guardrails. A small deterministic hybrid layer can align verdict vs score bands.
+
+    If ``TAVILY_API_KEY`` is unset or search fails, returns forensic-only result (same core shape as before).
     """
     base64_jpeg = _image_base64_from_upload(filename=filename, content_type=content_type, file_bytes=file_bytes)
     client = Groq(api_key=settings.groq_api_key)
