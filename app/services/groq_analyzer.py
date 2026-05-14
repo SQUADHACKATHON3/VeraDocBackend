@@ -5,6 +5,7 @@ from typing import Any
 
 from groq import Groq
 from pdf2image import convert_from_bytes
+from pdf2image.exceptions import PDFInfoNotInstalledError, PopplerNotInstalledError
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -189,7 +190,20 @@ def _bytes_to_base64_jpeg(image_bytes: bytes) -> str:
 
 
 def _pdf_first_page_to_base64_jpeg(pdf_bytes: bytes) -> str:
-    pages = convert_from_bytes(pdf_bytes, first_page=1, last_page=1)
+    try:
+        pages = convert_from_bytes(pdf_bytes, first_page=1, last_page=1)
+    except (PDFInfoNotInstalledError, PopplerNotInstalledError) as e:
+        raise RuntimeError(
+            "PDF conversion requires Poppler (pdftoppm) on the server. "
+            "Install poppler-utils (e.g. apt install poppler-utils) or deploy using the project Dockerfile."
+        ) from e
+    except OSError as e:
+        if "poppler" in str(e).lower() or "pdftoppm" in str(e).lower():
+            raise RuntimeError(
+                "PDF conversion requires Poppler (pdftoppm) on the server. "
+                "Install poppler-utils or deploy using the project Dockerfile."
+            ) from e
+        raise
     if not pages:
         raise ValueError("PDF has no pages")
     img = pages[0].convert("RGB")
@@ -198,8 +212,12 @@ def _pdf_first_page_to_base64_jpeg(pdf_bytes: bytes) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+def _is_pdf_magic(file_bytes: bytes) -> bool:
+    return len(file_bytes) >= 4 and file_bytes[:4] == b"%PDF"
+
+
 def _image_base64_from_upload(*, filename: str, content_type: str, file_bytes: bytes) -> str:
-    if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
+    if content_type == "application/pdf" or filename.lower().endswith(".pdf") or _is_pdf_magic(file_bytes):
         return _pdf_first_page_to_base64_jpeg(file_bytes)
     return _bytes_to_base64_jpeg(file_bytes)
 
