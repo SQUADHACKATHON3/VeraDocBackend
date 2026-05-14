@@ -32,11 +32,11 @@ Base URL: use your deployed API origin (e.g. `https://api.example.com`). Local d
 ```json
 {
   "message": "Account created successfully",
-  "credits": 1
+  "credits": 3
 }
 ```
 
-New users start with **1 credit**.
+New users start with **3 credits** (free on signup).
 
 **Errors:** `409` — `{"detail": "Email already registered"}`
 
@@ -423,7 +423,7 @@ Squad’s servers call this with a signed body. The SPA **must not** pretend to 
 
 ### A) First-time user
 
-1. `POST /api/auth/register` → note `credits` (1).
+1. `POST /api/auth/register` → note `credits` (3).
 2. `POST /api/auth/login` → store tokens.
 3. `POST /api/verify/initiate` with `file` → `verificationId`, `creditsRemaining`.
 4. Poll `GET /api/verify/{id}/status` until `complete` / `error`.

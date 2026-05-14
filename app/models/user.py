@@ -17,7 +17,7 @@ class User(Base):
     organisation: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    credits: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    credits: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default="3")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     credit_purchases = relationship("CreditPurchase", back_populates="user")
