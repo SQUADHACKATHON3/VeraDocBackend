@@ -20,19 +20,26 @@ def _configure_cloudinary() -> None:
     cloudinary.config(cloudinary_url=settings.cloudinary_url)
 
 
-def _encode_cloudinary_ref(public_id: str, resource_type: str) -> str:
-    payload = json.dumps({"p": public_id, "r": resource_type}, separators=(",", ":"))
+def _encode_cloudinary_ref(public_id: str, resource_type: str, *, version: int | None = None, asset_format: str | None = None) -> str:
+    d: dict[str, str] = {"p": public_id, "r": resource_type}
+    if version is not None:
+        d["v"] = str(int(version))
+    if asset_format:
+        d["f"] = asset_format
+    payload = json.dumps(d, separators=(",", ":"))
     return _CL_PREFIX + base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
 
 
-def _decode_cloudinary_ref(storage_key: str) -> tuple[str, str] | None:
+def _decode_cloudinary_ref(storage_key: str) -> dict[str, str] | None:
     if not storage_key.startswith(_CL_PREFIX):
         return None
     raw_b64 = storage_key[len(_CL_PREFIX) :]
     pad = "=" * (-len(raw_b64) % 4)
     data = base64.urlsafe_b64decode(raw_b64 + pad)
     d = json.loads(data.decode())
-    return d["p"], d["r"]
+    if "p" not in d or "r" not in d:
+        return None
+    return {str(k): str(v) for k, v in d.items()}
 
 
 def ensure_local_storage_dir() -> Path:
@@ -75,7 +82,11 @@ def save_upload_cloudinary(upload: UploadFile) -> tuple[str, int]:
     public_id = result["public_id"]
     resource_type = result["resource_type"]
     size = int(result.get("bytes") or 0)
-    return _encode_cloudinary_ref(public_id, resource_type), size
+    version = result.get("version")
+    ver_int = int(version) if version is not None else None
+    fmt = result.get("format")
+    fmt_s = str(fmt) if fmt else None
+    return _encode_cloudinary_ref(public_id, resource_type, version=ver_int, asset_format=fmt_s), size
 
 
 def save_upload(upload: UploadFile) -> tuple[str, int]:
@@ -86,13 +97,25 @@ def save_upload(upload: UploadFile) -> tuple[str, int]:
 
 
 def read_storage_key(storage_key: str) -> bytes:
-    ref = _decode_cloudinary_ref(storage_key)
-    if ref is not None:
-        public_id, resource_type = ref
+    meta = _decode_cloudinary_ref(storage_key)
+    if meta is not None:
+        public_id = meta["p"]
+        resource_type = meta["r"]
         _configure_cloudinary()
         from cloudinary.utils import cloudinary_url
 
-        url, _ = cloudinary_url(public_id, resource_type=resource_type, secure=True)
+        kwargs: dict = {
+            "resource_type": resource_type,
+            "secure": True,
+            # Accounts with strict transformations / private delivery return 401 on unsigned URLs.
+            "sign_url": True,
+        }
+        if meta.get("v"):
+            kwargs["version"] = int(meta["v"])
+        if meta.get("f"):
+            kwargs["format"] = meta["f"]
+
+        url, _ = cloudinary_url(public_id, **kwargs)
         with httpx.Client(timeout=120.0, follow_redirects=True) as client:
             r = client.get(url)
             r.raise_for_status()
