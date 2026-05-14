@@ -20,10 +20,13 @@ class Settings(BaseSettings):
     squad_currency: str = "NGN"
     squad_verification_amount_kobo: int = 100000  # legacy; unused for verify (credits now)
     squad_callback_url: str | None = None
-    """Optional. Legacy frontend URL pattern (e.g. Next.js after pay). Not used by this backend code today."""
+    """
+    Full URL of your **frontend** page Squad sends the customer to after checkout
+    (e.g. `https://app.example.com/credits/callback`). Passed as `callback_url` on transaction initiate.
 
-    squad_webhook_callback_url: str = "http://127.0.0.1:8000/api/verify/webhook"
-    """Squad `callback_url` on /transaction/initiate: server-to-server payment notify URL (our POST /api/verify/webhook)."""
+    Server-to-server payment notifications use the **webhook** URL you configure in the Squad dashboard;
+    that should point at this API's `POST /api/verify/webhook`.
+    """
     credit_price_kobo: int = 70000  # per credit, kobo (70000 = ₦700)
 
     groq_api_key: str

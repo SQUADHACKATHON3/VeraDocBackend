@@ -1,7 +1,7 @@
 # VeraDoc stack: Postgres + FastAPI (verification runs in-process via BackgroundTasks).
 # 1) cp .env.example .env  and fill secrets (JWT_SECRET, GROQ_API_KEY, SQUAD_SECRET_KEY, …)
 # 2) docker compose up --build
-# 3) API: http://localhost:8000  — set SQUAD_WEBHOOK_CALLBACK_URL to a URL Squad can reach (e.g. ngrok) for webhooks.
+# 3) API: http://localhost:8000  — set SQUAD_CALLBACK_URL to your frontend after-pay page (e.g. http://localhost:3000/credits/callback). In Squad dashboard, set the webhook to this API's POST /api/verify/webhook (public HTTPS, e.g. ngrok).
 
 services:
   postgres:

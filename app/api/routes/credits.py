@@ -52,13 +52,21 @@ async def initiate_credit_purchase(
     db.commit()
     db.refresh(purchase)
 
+    if not settings.squad_callback_url:
+        raise HTTPException(
+            status_code=503,
+            detail="Squad checkout is not configured: set SQUAD_CALLBACK_URL to your frontend return URL "
+            "(e.g. https://your-app.com/credits/callback). Webhooks are configured separately in the Squad dashboard "
+            "to POST /api/verify/webhook on this API.",
+        )
+
     squad = SquadClient()
     checkout_url = await squad.initiate_transaction(
         email=user.email,
         amount=amount_kobo,
         currency=settings.squad_currency,
         transaction_ref=str(purchase.id),
-        callback_url=settings.squad_webhook_callback_url,
+        callback_url=settings.squad_callback_url,
     )
 
     return CreditPurchaseInitiateOut(

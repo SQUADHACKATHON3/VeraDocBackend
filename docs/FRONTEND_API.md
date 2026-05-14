@@ -159,12 +159,13 @@ Display amounts to users as **₦ (amountKobo / 100)**.
 
 **Frontend flow**
 
-1. Call initiate → receive `checkoutUrl` and `purchaseId`.
-2. Open `checkoutUrl` (new tab, WebView, or redirect).
-3. After user pays, Squad notifies the **backend** webhook; credits update on the server.
-4. Poll **`GET /api/auth/me`** (or **`GET /api/credits/purchases/{purchaseId}`**) until `credits` increases / `status` is `completed`.
+1. Backend must have **`SQUAD_CALLBACK_URL`** set to your app’s **after-checkout page** (full URL), e.g. `https://your-app.com/credits/callback`. That value is sent to Squad as `callback_url` when starting checkout (customer lands there in the browser).
+2. In the **Squad merchant dashboard**, configure the **webhook / IPN** URL to this API’s **`POST /api/verify/webhook`** (full public HTTPS URL, e.g. `https://api.your-app.com/api/verify/webhook`). Squad’s servers POST there to confirm payment; credits update on the server.
+3. Call initiate → receive `checkoutUrl` and `purchaseId`.
+4. Open `checkoutUrl` (new tab, WebView, or redirect).
+5. On your `/credits/callback` page, read query params if Squad passes them, then poll **`GET /api/auth/me`** or **`GET /api/credits/purchases/{purchaseId}`** until `status` is `completed` / credits increase.
 
-**Errors:** `400` — invalid pack.
+**Errors:** `400` — invalid pack. `503` — credit purchase not configured (`SQUAD_CALLBACK_URL` missing).
 
 ---
 
@@ -415,7 +416,9 @@ When `status` is `complete`, `verdict`, `trustScore`, and `summary` are usually 
 
 `POST /api/verify/webhook`
 
-Squad’s servers call this with a signed body. The SPA **must not** pretend to be Squad. Configure **`SQUAD_WEBHOOK_CALLBACK_URL`** on the backend to a **public HTTPS** URL that reaches this route.
+Squad’s **servers** call this with a signed body after a successful charge (configure this URL in the **Squad dashboard** as your webhook / IPN endpoint). It is **not** the same as the browser `callback_url` (your SPA route like `/credits/callback`).
+
+The SPA **must not** pretend to be Squad. The webhook URL must be a **public HTTPS** address that reaches this route (e.g. `https://api.example.com/api/verify/webhook`).
 
 ---
 
