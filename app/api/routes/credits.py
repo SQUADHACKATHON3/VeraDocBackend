@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -13,6 +13,7 @@ from app.schemas.credits import (
     CreditPurchaseInitiateIn,
     CreditPurchaseInitiateOut,
 )
+from app.services.credit_purchase_completion import complete_pending_credit_purchase_by_id
 from app.services.squad import SquadClient
 
 router = APIRouter(prefix="/api/credits", tags=["credits"])
@@ -78,12 +79,35 @@ async def initiate_credit_purchase(
 
 
 @router.get("/purchases/{purchase_id}", response_model=dict)
-def purchase_status(
+async def purchase_status(
     purchase_id: UUID,
+    reconcile: bool = Query(
+        False,
+        description="If true and purchase is still pending, verify payment with Squad once and complete if paid.",
+    ),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     p = db.get(CreditPurchase, purchase_id)
     if not p or p.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase not found")
+
+    if reconcile and p.status == CreditPurchaseStatus.pending:
+        try:
+            squad = SquadClient()
+            verify_resp = await squad.verify_transaction(transaction_ref=str(purchase_id))
+            data = verify_resp.get("data")
+            if not isinstance(data, dict):
+                data = verify_resp if isinstance(verify_resp, dict) else {}
+            status_value = data.get("transaction_status")
+            if str(status_value).lower() == "success":
+                p2 = complete_pending_credit_purchase_by_id(db, purchase_id)
+                if p2:
+                    p = p2
+        except Exception:
+            pass
+
+    p = db.get(CreditPurchase, purchase_id)
+    if not p:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase not found")
     return {"purchaseId": str(p.id), "status": p.status.value, "credits": p.credits_granted}

@@ -51,6 +51,12 @@ def health() -> dict:
     return {"status": "VeraDoc API running"}
 
 
+@app.get("/api/health")
+def api_health() -> dict:
+    """Lightweight liveness check for uptime monitors (e.g. UptimeRobot). No auth; avoids cold-sleep on idle hosts."""
+    return {"status": "ok", "service": "veradoc-api"}
+
+
 app.include_router(auth.router)
 app.include_router(credits.router)
 app.include_router(verify.router)

@@ -43,16 +43,36 @@ class SquadClient:
             return resp.json()
 
 
-def compute_squad_signature(raw_body: bytes) -> str:
-    # Squad webhook signatures are computed using the Secret Key
-    # (no separate webhook secret in many setups).
+def squad_webhook_hmac_hex_upper(raw_body: bytes) -> str:
+    """HMAC-SHA512 of raw webhook body, hex uppercase (Squad `x-squad-encrypted-body`)."""
     secret = settings.squad_secret_key.encode("utf-8")
-    return hmac.new(secret, raw_body, hashlib.sha512).hexdigest()
+    return hmac.new(secret, raw_body, hashlib.sha512).hexdigest().upper()
 
 
-def verify_squad_signature(raw_body: bytes, provided_signature: str | None) -> bool:
-    if not provided_signature:
-        return False
-    expected = compute_squad_signature(raw_body)
-    return hmac.compare_digest(expected, provided_signature)
+def verify_squad_webhook_authentic(
+    raw_body: bytes,
+    *,
+    encrypted_body_header: str | None,
+    legacy_signature_header: str | None,
+) -> bool:
+    """
+    Squad docs: compare HMAC-SHA512(secret, raw_body) as **uppercase** hex to `x-squad-encrypted-body`.
+    We also accept legacy `x-squad-signature` as lowercase hex for older integrations.
+    """
+    if encrypted_body_header:
+        expected = squad_webhook_hmac_hex_upper(raw_body)
+        try:
+            return hmac.compare_digest(expected, encrypted_body_header.strip().upper())
+        except (TypeError, ValueError):
+            return False
+
+    if legacy_signature_header:
+        secret = settings.squad_secret_key.encode("utf-8")
+        expected_lower = hmac.new(secret, raw_body, hashlib.sha512).hexdigest().lower()
+        try:
+            return hmac.compare_digest(expected_lower, legacy_signature_header.strip().lower())
+        except (TypeError, ValueError):
+            return False
+
+    return False
 

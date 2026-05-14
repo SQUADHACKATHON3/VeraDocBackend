@@ -163,7 +163,7 @@ Display amounts to users as **₦ (amountKobo / 100)**.
 2. In the **Squad merchant dashboard**, configure the **webhook / IPN** URL to this API’s **`POST /api/verify/webhook`** (full public HTTPS URL, e.g. `https://api.your-app.com/api/verify/webhook`). Squad’s servers POST there to confirm payment; credits update on the server.
 3. Call initiate → receive `checkoutUrl` and `purchaseId`.
 4. Open `checkoutUrl` (new tab, WebView, or redirect).
-5. On your `/credits/callback` page, read query params if Squad passes them, then poll **`GET /api/auth/me`** or **`GET /api/credits/purchases/{purchaseId}`** until `status` is `completed` / credits increase.
+5. On your `/credits/callback` page, poll **`GET /api/credits/purchases/{purchaseId}?reconcile=true`** (see section 2.3) until `status` is `completed`, or poll **`GET /api/auth/me`** until credits increase. Use `reconcile=true` at least once after checkout so a missed Squad webhook can still finalize the purchase.
 
 **Errors:** `400` — invalid pack. `503` — credit purchase not configured (`SQUAD_CALLBACK_URL` missing).
 
@@ -173,6 +173,12 @@ Display amounts to users as **₦ (amountKobo / 100)**.
 
 `GET /api/credits/purchases/{purchase_id}`  
 **Auth:** Bearer (must own the purchase)
+
+**Query**
+
+| Param | Default | Notes |
+|--------|---------|--------|
+| `reconcile` | `false` | If `true` and status is still `pending`, the server calls Squad’s verify API once and completes the purchase when payment succeeded (covers delayed or failed webhooks). |
 
 **200 response:**
 
@@ -417,6 +423,8 @@ When `status` is `complete`, `verdict`, `trustScore`, and `summary` are usually 
 `POST /api/verify/webhook`
 
 Squad’s **servers** call this with a signed body after a successful charge (configure this URL in the **Squad dashboard** as your webhook / IPN endpoint). It is **not** the same as the browser `callback_url` (your SPA route like `/credits/callback`).
+
+Validation uses the **`x-squad-encrypted-body`** header: HMAC-SHA512 of the **raw** request body with your secret key, **uppercase** hex (per [Squad signature validation](https://docs.squadco.com/webhook-direct-url/signature-validation)). Legacy **`x-squad-signature`** (lowercase hex) is still accepted if present.
 
 The SPA **must not** pretend to be Squad. The webhook URL must be a **public HTTPS** address that reaches this route (e.g. `https://api.example.com/api/verify/webhook`).
 

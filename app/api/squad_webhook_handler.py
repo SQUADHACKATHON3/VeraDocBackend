@@ -8,10 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.credit_purchase import CreditPurchase, CreditPurchaseStatus
-from app.models.user import User
 from app.models.verification import PaymentStatus, Verification, VerificationStatus
 from app.models.webhook_event import WebhookEvent
-from app.services.squad import SquadClient, verify_squad_signature
+from app.services.credit_purchase_completion import complete_pending_credit_purchase_by_id
+from app.services.squad import SquadClient, verify_squad_webhook_authentic
 from app.tasks.verification_tasks import process_verification
 
 
@@ -21,8 +21,13 @@ async def handle_squad_charge_webhook(
     db: Session,
 ) -> dict:
     raw = await request.body()
-    sig = request.headers.get("x-squad-signature")
-    sig_valid = verify_squad_signature(raw, sig)
+    enc = request.headers.get("x-squad-encrypted-body")
+    legacy = request.headers.get("x-squad-signature")
+    sig_valid = verify_squad_webhook_authentic(
+        raw,
+        encrypted_body_header=enc,
+        legacy_signature_header=legacy,
+    )
     if not sig_valid:
         raise HTTPException(status_code=401, detail="Invalid signature")
 
@@ -66,20 +71,16 @@ async def handle_squad_charge_webhook(
         try:
             squad = SquadClient()
             verify_resp = await squad.verify_transaction(transaction_ref=transaction_ref)
-            status_value = (verify_resp.get("data") or {}).get("transaction_status")
+            data = verify_resp.get("data")
+            if not isinstance(data, dict):
+                data = verify_resp if isinstance(verify_resp, dict) else {}
+            status_value = data.get("transaction_status")
             if str(status_value).lower() != "success":
                 return {"received": True}
         except Exception:
             return {"received": True}
 
-        owner = db.get(User, credit_purchase.user_id)
-        if not owner:
-            return {"received": True}
-        owner.credits += credit_purchase.credits_granted
-        credit_purchase.status = CreditPurchaseStatus.completed
-        db.add(owner)
-        db.add(credit_purchase)
-        db.commit()
+        complete_pending_credit_purchase_by_id(db, tid)
         return {"received": True}
 
     verification: Verification | None = db.get(Verification, tid)
@@ -89,7 +90,10 @@ async def handle_squad_charge_webhook(
     try:
         squad = SquadClient()
         verify_resp = await squad.verify_transaction(transaction_ref=transaction_ref)
-        status_value = (verify_resp.get("data") or {}).get("transaction_status")
+        data = verify_resp.get("data")
+        if not isinstance(data, dict):
+            data = verify_resp if isinstance(verify_resp, dict) else {}
+        status_value = data.get("transaction_status")
         if str(status_value).lower() != "success":
             return {"received": True}
     except Exception:
