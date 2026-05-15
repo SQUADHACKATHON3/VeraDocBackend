@@ -17,5 +17,5 @@ COPY app/ ./app/
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 
-# Render (and similar) set PORT; local Docker Compose keeps 8000:8000 without PORT.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Render (and similar) set PORT; local Docker Compose overrides CMD with its own migrate+uvicorn.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
