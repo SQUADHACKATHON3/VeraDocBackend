@@ -1,7 +1,6 @@
-"""Send transactional emails (OTP, password reset).
+"""Send transactional emails (OTP, password reset) via Resend.
 
-Drivers: 'smtp' (default) or 'resend'.
-Set EMAIL_DRIVER + the relevant credentials in .env.
+Set RESEND_API_KEY and RESEND_FROM in .env. Optional EMAIL_DRIVER=smtp for local fallback.
 """
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-import httpx
+import resend
 
 from app.core.config import settings
 
@@ -60,11 +59,26 @@ def send_otp_email(*, to: str, code: str, otp_type: str) -> None:
         subject = "Reset your VeraDoc password"
         heading = "Use the code below to reset your password."
 
-    driver = (settings.email_driver or "smtp").lower()
-    if driver == "resend":
-        _send_via_resend(to=to, subject=subject, code=code, heading=heading)
-    else:
+    driver = (settings.email_driver or "resend").lower()
+    if driver == "smtp":
         _send_via_smtp(to=to, subject=subject, code=code, heading=heading)
+    else:
+        _send_via_resend(to=to, subject=subject, code=code, heading=heading)
+
+
+def _send_via_resend(*, to: str, subject: str, code: str, heading: str) -> None:
+    if not settings.resend_api_key:
+        raise RuntimeError("RESEND_API_KEY is required when EMAIL_DRIVER=resend")
+
+    resend.api_key = settings.resend_api_key
+    params: resend.Emails.SendParams = {
+        "from": settings.resend_from,
+        "to": [to],
+        "subject": subject,
+        "html": _html_otp_email(code, subject, heading),
+        "text": _text_otp_email(code, subject),
+    }
+    resend.Emails.send(params)
 
 
 def _send_via_smtp(*, to: str, subject: str, code: str, heading: str) -> None:
@@ -90,26 +104,3 @@ def _send_via_smtp(*, to: str, subject: str, code: str, heading: str) -> None:
             if settings.smtp_user and settings.smtp_password:
                 s.login(settings.smtp_user, settings.smtp_password)
             s.send_message(msg)
-
-
-def _send_via_resend(*, to: str, subject: str, code: str, heading: str) -> None:
-    if not settings.resend_api_key:
-        raise RuntimeError("RESEND_API_KEY is required when EMAIL_DRIVER=resend")
-
-    payload = {
-        "from": settings.resend_from,
-        "to": [to],
-        "subject": subject,
-        "html": _html_otp_email(code, subject, heading),
-        "text": _text_otp_email(code, subject),
-    }
-    resp = httpx.post(
-        "https://api.resend.com/emails",
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {settings.resend_api_key}",
-            "Content-Type": "application/json",
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()

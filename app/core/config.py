@@ -68,8 +68,8 @@ class Settings(BaseSettings):
     """
 
     # ── Email / OTP ───────────────────────────────────────────────────────────
-    email_driver: str = "smtp"
-    """'smtp' or 'resend'. When set to 'resend', RESEND_API_KEY is required."""
+    email_driver: str = "resend"
+    """'resend' (default) or 'smtp'. Resend requires RESEND_API_KEY."""
 
     smtp_host: str | None = None
     smtp_port: int = 587
