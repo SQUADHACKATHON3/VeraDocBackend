@@ -36,6 +36,27 @@ from app.services.otp_service import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _oauth_login_redirect(*, error: str) -> RedirectResponse:
+    import urllib.parse
+
+    url = (
+        f"{settings.frontend_url.rstrip('/')}/auth/login"
+        f"?error={urllib.parse.quote(error)}"
+    )
+    return RedirectResponse(url=url, status_code=302)
+
+
+def _oauth_success_redirect(*, access_token: str, refresh_token: str) -> RedirectResponse:
+    import urllib.parse
+
+    url = (
+        f"{settings.frontend_url.rstrip('/')}/auth/callback"
+        f"?token={urllib.parse.quote(access_token)}"
+        f"&refresh_token={urllib.parse.quote(refresh_token)}"
+    )
+    return RedirectResponse(url=url, status_code=302)
+
+
 # ── Register ──────────────────────────────────────────────────────────────────
 
 @router.post("/register", status_code=201)
@@ -143,103 +164,114 @@ def google_login() -> dict:
 
 @router.get("/google/callback")
 async def google_callback(
-    code: str,
+    code: str | None = None,
     state: str | None = None,
+    error: str | None = None,
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     """Exchange code for tokens, upsert user, redirect to frontend with JWT tokens."""
+    if error:
+        return _oauth_login_redirect(error="Google sign-in was cancelled.")
+
     if not settings.google_client_id or not settings.google_client_secret or not settings.google_redirect_uri:
-        raise HTTPException(status_code=503, detail="Google OAuth is not configured on this server.")
+        return _oauth_login_redirect(error="Google sign-in is not configured on this server.")
+
+    if not code:
+        return _oauth_login_redirect(error="Google sign-in failed. Missing authorization code.")
 
     if not state:
-        raise HTTPException(status_code=400, detail="Missing OAuth state")
+        return _oauth_login_redirect(error="Google sign-in failed. Missing security state.")
+
     try:
         state_payload = jwt.decode(state, settings.jwt_secret, algorithms=["HS256"])
     except JWTError:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+        return _oauth_login_redirect(error="Google sign-in failed. Invalid security state.")
+
     if state_payload.get("purpose") != "google_oauth":
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+        return _oauth_login_redirect(error="Google sign-in failed. Invalid security state.")
 
     import httpx as _httpx
 
-    # Exchange authorisation code for Google tokens
-    token_resp = _httpx.post(
-        "https://oauth2.googleapis.com/token",
-        data={
-            "code": code,
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "redirect_uri": settings.google_redirect_uri,
-            "grant_type": "authorization_code",
-        },
-        timeout=15,
-    )
-    if token_resp.status_code != 200:
-        raise HTTPException(status_code=400, detail="Google token exchange failed.")
-    token_data = token_resp.json()
-    id_token_str = token_data.get("id_token")
-    if not id_token_str:
-        raise HTTPException(status_code=400, detail="Google did not return an id_token.")
+    try:
+        token_resp = _httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": settings.google_redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=15,
+        )
+        if token_resp.status_code != 200:
+            return _oauth_login_redirect(error="Google sign-in failed. Could not exchange token.")
 
-    # Fetch user info using access_token
-    userinfo_resp = _httpx.get(
-        "https://www.googleapis.com/oauth2/v3/userinfo",
-        headers={"Authorization": f"Bearer {token_data['access_token']}"},
-        timeout=15,
-    )
-    if userinfo_resp.status_code != 200:
-        raise HTTPException(status_code=400, detail="Could not fetch Google user info.")
-    info = userinfo_resp.json()
+        token_data = token_resp.json()
+        access_token_google = token_data.get("access_token")
+        if not access_token_google:
+            return _oauth_login_redirect(error="Google sign-in failed. No access token returned.")
 
-    google_id: str = info["sub"]
-    email: str = info["email"]
-    name: str = info.get("name") or email.split("@")[0]
-    if not info.get("email_verified", True):
-        raise HTTPException(status_code=400, detail="Google email is not verified")
+        userinfo_resp = _httpx.get(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token_google}"},
+            timeout=15,
+        )
+        if userinfo_resp.status_code != 200:
+            return _oauth_login_redirect(error="Google sign-in failed. Could not load profile.")
 
-    user = db.scalar(select(User).where(User.google_id == google_id))
-    if not user:
-        existing = db.scalar(select(User).where(User.email == email))
-        if existing:
-            if existing.google_id and existing.google_id != google_id:
-                raise HTTPException(status_code=409, detail="Email already linked to another Google account")
-            if existing.password_hash and not existing.email_verified:
-                raise HTTPException(
-                    status_code=409,
-                    detail="An account with this email exists but is not verified. Verify your email or use forgot-password before using Google sign-in.",
+        info = userinfo_resp.json()
+        google_id: str = info.get("sub") or ""
+        email: str = info.get("email") or ""
+        if not google_id or not email:
+            return _oauth_login_redirect(error="Google sign-in failed. Email permission is required.")
+
+        name: str = info.get("name") or email.split("@")[0]
+        if not info.get("email_verified", True):
+            return _oauth_login_redirect(error="Your Google email must be verified.")
+
+        user = db.scalar(select(User).where(User.google_id == google_id))
+        if not user:
+            existing = db.scalar(select(User).where(User.email == email))
+            if existing:
+                if existing.google_id and existing.google_id != google_id:
+                    return _oauth_login_redirect(
+                        error="This email is already linked to a different Google account."
+                    )
+                if existing.password_hash and not existing.email_verified:
+                    return _oauth_login_redirect(
+                        error="An account exists with this email but is not verified. "
+                        "Verify your email or reset your password first."
+                    )
+                user = existing
+                user.google_id = google_id
+                user.email_verified = True
+            else:
+                user = User(
+                    name=name,
+                    organisation="",
+                    email=email,
+                    password_hash=None,
+                    google_id=google_id,
+                    email_verified=True,
                 )
-            user = existing
+                db.add(user)
+        else:
             user.google_id = google_id
             user.email_verified = True
-        else:
-            user = None
+            if not user.name:
+                user.name = name
 
-    if user:
-        user.google_id = google_id
-        user.email_verified = True
-    elif user is None:
-        user = User(
-            name=name,
-            organisation="",
-            email=email,
-            password_hash=None,
-            google_id=google_id,
-            email_verified=True,
+        db.commit()
+        db.refresh(user)
+
+        return _oauth_success_redirect(
+            access_token=create_access_token(str(user.id)),
+            refresh_token=create_refresh_token(str(user.id)),
         )
-        db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    access_token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
-
-    import urllib.parse
-    redirect_url = (
-        f"{settings.frontend_url.rstrip('/')}/auth/callback"
-        f"?token={urllib.parse.quote(access_token)}"
-        f"&refresh_token={urllib.parse.quote(refresh_token)}"
-    )
-    return RedirectResponse(url=redirect_url, status_code=302)
+    except Exception:
+        db.rollback()
+        return _oauth_login_redirect(error="Google sign-in failed. Please try again.")
 
 
 # ── Email Verification OTP ────────────────────────────────────────────────────
