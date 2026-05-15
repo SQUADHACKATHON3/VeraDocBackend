@@ -50,12 +50,12 @@ async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespons
     return JSONResponse(status_code=500, content=body)
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "POST", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE"])
 def health() -> dict:
     return {"status": "VeraDoc API running"}
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "POST", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE"])
 def api_health() -> dict:
     """Lightweight liveness check for uptime monitors (e.g. UptimeRobot). No auth; avoids cold-sleep on idle hosts."""
     return {"status": "ok", "service": "veradoc-api"}
