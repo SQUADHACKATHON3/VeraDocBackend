@@ -1,10 +1,14 @@
 """Send transactional emails (OTP, password reset) via Resend.
 
 Set RESEND_API_KEY and RESEND_FROM in .env. Optional EMAIL_DRIVER=smtp for local fallback.
+
+Resend sandbox: `onboarding@resend.dev` only delivers to the email on your Resend account.
+Verify a domain at resend.com/domains for production recipients.
 """
 
 from __future__ import annotations
 
+import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -12,6 +16,8 @@ from email.mime.text import MIMEText
 import resend
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _html_otp_email(code: str, subject: str, heading: str) -> str:
@@ -50,8 +56,24 @@ def _text_otp_email(code: str, subject: str) -> str:
     )
 
 
+def should_log_otp_codes() -> bool:
+    return settings.otp_log_codes or settings.env.lower() == "local"
+
+
+def log_otp_code(*, to: str, code: str, otp_type: str) -> None:
+    """Log OTP for local debugging (Render logs / terminal). Never expose in API in production."""
+    if should_log_otp_codes():
+        logger.warning(
+            "OTP code for %s (type=%s): %s — expires in %s min",
+            to,
+            otp_type,
+            code,
+            settings.otp_ttl_minutes,
+        )
+
+
 def send_otp_email(*, to: str, code: str, otp_type: str) -> None:
-    """Fire-and-forget OTP email. Call inside a BackgroundTask."""
+    """Send OTP email. Raises on failure."""
     if otp_type == "email_verification":
         subject = "Your VeraDoc verification code"
         heading = "Please verify your email address."
@@ -64,6 +86,22 @@ def send_otp_email(*, to: str, code: str, otp_type: str) -> None:
         _send_via_smtp(to=to, subject=subject, code=code, heading=heading)
     else:
         _send_via_resend(to=to, subject=subject, code=code, heading=heading)
+
+
+def send_otp_email_task(*, to: str, code: str, otp_type: str) -> None:
+    """Background-task entrypoint: send email and log failures (and OTP in local/dev)."""
+    log_otp_code(to=to, code=code, otp_type=otp_type)
+    try:
+        send_otp_email(to=to, code=code, otp_type=otp_type)
+        logger.info("OTP email sent to %s (type=%s)", to, otp_type)
+    except Exception:
+        logger.exception(
+            "Failed to send OTP email to %s (type=%s). "
+            "If using Resend onboarding@resend.dev, only your Resend account email can receive mail "
+            "until you verify a domain.",
+            to,
+            otp_type,
+        )
 
 
 def _send_via_resend(*, to: str, subject: str, code: str, heading: str) -> None:

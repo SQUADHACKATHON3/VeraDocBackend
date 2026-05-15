@@ -25,7 +25,7 @@ from app.schemas.auth import (
     TokenOut,
     VerifyEmailIn,
 )
-from app.services.email_service import send_otp_email
+from app.services.email_service import log_otp_code, send_otp_email_task, should_log_otp_codes
 from app.services.otp_service import (
     OtpVerifyResult,
     create_otp,
@@ -58,9 +58,18 @@ def register(
     db.refresh(user)
 
     code = create_otp(db, email=user.email, otp_type=OtpType.email_verification, user_id=str(user.id))
-    background_tasks.add_task(send_otp_email, to=user.email, code=code, otp_type="email_verification")
+    log_otp_code(to=user.email, code=code, otp_type="email_verification")
+    background_tasks.add_task(
+        send_otp_email_task, to=user.email, code=code, otp_type="email_verification"
+    )
 
-    return {"message": "Account created successfully. Check your email for a verification code.", "credits": user.credits}
+    response: dict = {
+        "message": "Account created successfully. Check your email for a verification code.",
+        "credits": user.credits,
+    }
+    if should_log_otp_codes():
+        response["devOtp"] = code
+    return response
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -275,8 +284,14 @@ def resend_otp(
             )
 
     code = create_otp(db, email=user.email, otp_type=OtpType.email_verification, user_id=str(user.id))
-    background_tasks.add_task(send_otp_email, to=user.email, code=code, otp_type="email_verification")
-    return {"message": "OTP sent successfully"}
+    log_otp_code(to=user.email, code=code, otp_type="email_verification")
+    background_tasks.add_task(
+        send_otp_email_task, to=user.email, code=code, otp_type="email_verification"
+    )
+    body: dict = {"message": "OTP sent successfully"}
+    if should_log_otp_codes():
+        body["devOtp"] = code
+    return body
 
 
 # ── Forgot / Reset Password ───────────────────────────────────────────────────
@@ -302,7 +317,10 @@ def forgot_password(
             )
 
     code = create_otp(db, email=payload.email, otp_type=OtpType.password_reset, user_id=str(user.id))
-    background_tasks.add_task(send_otp_email, to=payload.email, code=code, otp_type="password_reset")
+    log_otp_code(to=payload.email, code=code, otp_type="password_reset")
+    background_tasks.add_task(
+        send_otp_email_task, to=payload.email, code=code, otp_type="password_reset"
+    )
     return {"message": "If an account exists, a reset code has been sent"}
 
 

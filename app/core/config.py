@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     otp_ttl_minutes: int = 10
     otp_resend_cooldown_seconds: int = 60
     otp_max_attempts: int = 5
+    otp_log_codes: bool = False
+    """When true, log OTP codes to server logs (auto-enabled when env=local)."""
 
 
 settings = Settings()  # type: ignore[call-arg]
