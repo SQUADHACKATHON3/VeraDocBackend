@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from app.core.config import settings
 from app.db.base import Base
 from app.models.credit_purchase import CreditPurchase  # noqa: F401
+from app.models.otp_code import OtpCode  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.verification import Verification  # noqa: F401
 from app.models.webhook_event import WebhookEvent  # noqa: F401

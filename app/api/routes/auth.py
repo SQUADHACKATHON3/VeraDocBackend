@@ -1,19 +1,48 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_current_user, get_db
 from app.core.config import settings
-from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    hash_password,
+    verify_password,
+)
+from app.models.otp_code import OtpType
 from app.models.user import User
-from app.schemas.auth import LoginIn, MeOut, RegisterIn, TokenOut
+from app.schemas.auth import (
+    ForgotPasswordIn,
+    LoginIn,
+    MeOut,
+    RegisterIn,
+    ResetPasswordIn,
+    TokenOut,
+    VerifyEmailIn,
+)
+from app.services.email_service import send_otp_email
+from app.services.otp_service import (
+    create_otp,
+    get_last_otp_created_at,
+    verify_and_consume_otp,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+# ── Register ──────────────────────────────────────────────────────────────────
+
 @router.post("/register", status_code=201)
-def register(payload: RegisterIn, db: Session = Depends(get_db)) -> dict:
+def register(
+    payload: RegisterIn,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
     existing = db.scalar(select(User).where(User.email == payload.email))
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -26,16 +55,27 @@ def register(payload: RegisterIn, db: Session = Depends(get_db)) -> dict:
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"message": "Account created successfully", "credits": user.credits}
 
+    code = create_otp(db, email=user.email, otp_type=OtpType.email_verification, user_id=str(user.id))
+    background_tasks.add_task(send_otp_email, to=user.email, code=code, otp_type="email_verification")
+
+    return {"message": "Account created successfully. Check your email for a verification code.", "credits": user.credits}
+
+
+# ── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=TokenOut)
 def login(payload: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
     user = db.scalar(select(User).where(User.email == payload.email))
-    if not user or not verify_password(payload.password, user.password_hash):
+    if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    return TokenOut(access_token=create_access_token(str(user.id)), refresh_token=create_refresh_token(str(user.id)))
+    return TokenOut(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
 
+
+# ── Refresh ───────────────────────────────────────────────────────────────────
 
 @router.post("/refresh", response_model=TokenOut)
 def refresh(refresh_token: str, db: Session = Depends(get_db)) -> TokenOut:
@@ -48,8 +88,13 @@ def refresh(refresh_token: str, db: Session = Depends(get_db)) -> TokenOut:
     user_id = payload.get("sub")
     if not user_id or not db.get(User, user_id):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-    return TokenOut(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
+    return TokenOut(
+        access_token=create_access_token(user_id),
+        refresh_token=create_refresh_token(user_id),
+    )
 
+
+# ── Me ────────────────────────────────────────────────────────────────────────
 
 @router.get("/me", response_model=MeOut)
 def me(user: User = Depends(get_current_user)) -> MeOut:
@@ -59,5 +104,193 @@ def me(user: User = Depends(get_current_user)) -> MeOut:
         organisation=user.organisation,
         email=user.email,
         credits=user.credits,
+        emailVerified=user.email_verified,
     )
 
+
+# ── Google OAuth ──────────────────────────────────────────────────────────────
+
+@router.get("/google")
+def google_login() -> dict:
+    """Return the Google OAuth authorization URL. Frontend redirects the user there."""
+    if not settings.google_client_id or not settings.google_redirect_uri:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured on this server.")
+    import urllib.parse
+    params = {
+        "client_id": settings.google_client_id,
+        "redirect_uri": settings.google_redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "select_account",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return {"url": url}
+
+
+@router.get("/google/callback")
+async def google_callback(code: str, db: Session = Depends(get_db)) -> RedirectResponse:
+    """Exchange code for tokens, upsert user, redirect to frontend with JWT tokens."""
+    if not settings.google_client_id or not settings.google_client_secret or not settings.google_redirect_uri:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured on this server.")
+
+    import httpx as _httpx
+
+    # Exchange authorisation code for Google tokens
+    token_resp = _httpx.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
+            "client_id": settings.google_client_id,
+            "client_secret": settings.google_client_secret,
+            "redirect_uri": settings.google_redirect_uri,
+            "grant_type": "authorization_code",
+        },
+        timeout=15,
+    )
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=400, detail="Google token exchange failed.")
+    token_data = token_resp.json()
+    id_token_str = token_data.get("id_token")
+    if not id_token_str:
+        raise HTTPException(status_code=400, detail="Google did not return an id_token.")
+
+    # Fetch user info using access_token
+    userinfo_resp = _httpx.get(
+        "https://www.googleapis.com/oauth2/v3/userinfo",
+        headers={"Authorization": f"Bearer {token_data['access_token']}"},
+        timeout=15,
+    )
+    if userinfo_resp.status_code != 200:
+        raise HTTPException(status_code=400, detail="Could not fetch Google user info.")
+    info = userinfo_resp.json()
+
+    google_id: str = info["sub"]
+    email: str = info["email"]
+    name: str = info.get("name") or email.split("@")[0]
+
+    # Upsert user: match by google_id first, then by email
+    user = db.scalar(select(User).where(User.google_id == google_id))
+    if not user:
+        user = db.scalar(select(User).where(User.email == email))
+    if user:
+        user.google_id = google_id
+        user.email_verified = True
+    else:
+        user = User(
+            name=name,
+            organisation="",
+            email=email,
+            password_hash=None,
+            google_id=google_id,
+            email_verified=True,
+        )
+        db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
+
+    import urllib.parse
+    redirect_url = (
+        f"{settings.frontend_url.rstrip('/')}/auth/callback"
+        f"?token={urllib.parse.quote(access_token)}"
+        f"&refresh_token={urllib.parse.quote(refresh_token)}"
+    )
+    return RedirectResponse(url=redirect_url, status_code=302)
+
+
+# ── Email Verification OTP ────────────────────────────────────────────────────
+
+@router.post("/verify-email")
+def verify_email(
+    payload: VerifyEmailIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if user.email_verified:
+        return {"message": "Email already verified"}
+    ok = verify_and_consume_otp(
+        db, email=user.email, otp_type=OtpType.email_verification, code=payload.otp
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    user.email_verified = True
+    db.add(user)
+    db.commit()
+    return {"message": "Email verified successfully"}
+
+
+@router.post("/resend-otp")
+def resend_otp(
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if user.email_verified:
+        return {"message": "Email already verified"}
+
+    last = get_last_otp_created_at(db, email=user.email, otp_type=OtpType.email_verification)
+    if last:
+        elapsed = (datetime.now(timezone.utc) - last.replace(tzinfo=timezone.utc)).total_seconds()
+        if elapsed < settings.otp_resend_cooldown_seconds:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {int(settings.otp_resend_cooldown_seconds - elapsed)} seconds before requesting another code.",
+            )
+
+    code = create_otp(db, email=user.email, otp_type=OtpType.email_verification, user_id=str(user.id))
+    background_tasks.add_task(send_otp_email, to=user.email, code=code, otp_type="email_verification")
+    return {"message": "OTP sent successfully"}
+
+
+# ── Forgot / Reset Password ───────────────────────────────────────────────────
+
+@router.post("/forgot-password")
+def forgot_password(
+    payload: ForgotPasswordIn,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    user = db.scalar(select(User).where(User.email == payload.email))
+    if not user:
+        # Spec says 404 for UX; change to always-200 if you prefer security over UX.
+        raise HTTPException(status_code=404, detail="No account found with that email address.")
+
+    last = get_last_otp_created_at(db, email=payload.email, otp_type=OtpType.password_reset)
+    if last:
+        elapsed = (datetime.now(timezone.utc) - last.replace(tzinfo=timezone.utc)).total_seconds()
+        if elapsed < settings.otp_resend_cooldown_seconds:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {int(settings.otp_resend_cooldown_seconds - elapsed)} seconds before requesting another code.",
+            )
+
+    code = create_otp(db, email=payload.email, otp_type=OtpType.password_reset, user_id=str(user.id))
+    background_tasks.add_task(send_otp_email, to=payload.email, code=code, otp_type="password_reset")
+    return {"message": "If an account exists, a reset code has been sent"}
+
+
+@router.post("/reset-password")
+def reset_password(
+    payload: ResetPasswordIn,
+    db: Session = Depends(get_db),
+) -> dict:
+    if len(payload.newPassword) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+
+    ok = verify_and_consume_otp(
+        db, email=payload.email, otp_type=OtpType.password_reset, code=payload.otp
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    user = db.scalar(select(User).where(User.email == payload.email))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.password_hash = hash_password(payload.newPassword)
+    db.add(user)
+    db.commit()
+    return {"message": "Password reset successfully"}

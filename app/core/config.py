@@ -54,6 +54,36 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = True
     """Set False if you use `cors_origins='*'` (browsers forbid credentials with wildcard origin)."""
 
+    # ── Frontend ──────────────────────────────────────────────────────────────
+    frontend_url: str = "http://localhost:3000"
+    """Root URL of the Next.js/frontend app (no trailing slash). Used for OAuth redirects."""
+
+    # ── Google OAuth ──────────────────────────────────────────────────────────
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str | None = None
+    """
+    Full callback URL registered in Google Cloud Console, e.g.
+    https://api.example.com/api/auth/google/callback
+    """
+
+    # ── Email / OTP ───────────────────────────────────────────────────────────
+    email_driver: str = "smtp"
+    """'smtp' or 'resend'. When set to 'resend', RESEND_API_KEY is required."""
+
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str = "noreply@veradoc.app"
+    smtp_tls: bool = True
+
+    resend_api_key: str | None = None
+    resend_from: str = "noreply@veradoc.app"
+
+    otp_ttl_minutes: int = 10
+    otp_resend_cooldown_seconds: int = 60
+
 
 settings = Settings()  # type: ignore[call-arg]
 
