@@ -44,7 +44,7 @@ class Verification(Base):
     payment_status: Mapped[PaymentStatus] = mapped_column(Enum(PaymentStatus), default=PaymentStatus.pending)
     status: Mapped[VerificationStatus] = mapped_column(Enum(VerificationStatus), default=VerificationStatus.pending)
 
-    verdict: Mapped[Verdict | None] = mapped_column(Enum(Verdict), nullable=True)
+    verdict: Mapped[Verdict | None] = mapped_column(Enum(Verdict, values_callable=lambda x: [e.value for e in x]), nullable=True)
     trust_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ai_output: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
