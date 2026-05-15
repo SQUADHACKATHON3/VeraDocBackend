@@ -141,7 +141,7 @@ Institution validation rules (apply in order):
 3. INSTITUTION NOT FOUND / CONTRADICTED: If web results show the institution does not exist, is a known diploma mill, or is listed as fraudulent, mark FAKE or escalate NEEDS REVIEW to FAKE with clear flag "Web: Institution not found or flagged as fraudulent."
 4. NO USEFUL RESULTS: If snippets are unrelated or empty, preserve the forensic verdict unchanged.
 5. Adjust trust_score by at most ~20 points total from web evidence unless evidence is decisive (institution confirmed fraudulent).
-6. Add brief flags like "Web: ..." whenever web search influenced the outcome.
+6. Add brief flags like "Web: <warning>" ONLY if web search found negative anomalies or contradicts the document. Do NOT add positive web confirmations to the flags array; put positive confirmations in passed_checks.
 
 Also produce suggested_outreach_message in the SAME JSON response (one model call — no follow-up):
 - Plain text only, no markdown fences. Start with a line "Subject: ..." then a blank line, then the email body the end user can copy to send to the issuing institution.
@@ -155,8 +155,8 @@ Output ONLY this JSON shape (no markdown):
 {{
   "verdict": "AUTHENTIC" or "NEEDS REVIEW" or "FAKE",
   "trust_score": 0-100,
-  "flags": [],
-  "passed_checks": [],
+  "flags": ["only negative anomalies or suspicious signals; MUST be empty if document is 100% authentic"],
+  "passed_checks": ["positive checks that passed and confirm authenticity"],
   "summary": "one sentence",
   "suggested_outreach_message": "Subject: ...\\n\\nDear ...\\n\\n...\\n\\n[Your full name]\\n[Your email or phone]"
 }}
@@ -166,8 +166,8 @@ Output ONLY this JSON shape (no markdown):
 class GroqVerdict(BaseModel):
     verdict: str = Field(pattern=r"^(AUTHENTIC|NEEDS REVIEW|FAKE)$")
     trust_score: int = Field(ge=0, le=100)
-    flags: list[str]
-    passed_checks: list[str]
+    flags: list[str] = Field(description="ONLY negative anomalies, warnings, or suspicious signals. Must be empty if 100% authentic.")
+    passed_checks: list[str] = Field(description="Positive checks that passed and confirm authenticity.")
     summary: str
 
 

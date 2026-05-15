@@ -167,9 +167,7 @@ def build_issuer_contact_hints(
     screening_summary: str | None = None,
     ai_outreach_message: str | None = None,
 ) -> dict[str, Any] | None:
-    if verdict != ISSUER_HINTS_VERDICT or trust_score is None:
-        return None
-    if not (ISSUER_HINTS_MIN_TRUST <= trust_score <= ISSUER_HINTS_MAX_TRUST):
+    if trust_score is None:
         return None
     if not web_blocks:
         return None
@@ -191,7 +189,7 @@ def build_issuer_contact_hints(
 
     out: dict[str, Any] = {
         "included": True,
-        "trigger": f"needs_review_{ISSUER_HINTS_MIN_TRUST}_{ISSUER_HINTS_MAX_TRUST}_trust",
+        "trigger": "always_show",
         "unverified": True,
         "disclaimer": (
             "These contacts were parsed from web search snippets. They are not verified by VeraDoc. "
