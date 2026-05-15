@@ -43,7 +43,11 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
-    return JSONResponse(status_code=500, content={"error": "Internal server error", "detail": str(exc)})
+    detail = str(exc) if settings.env == "local" else None
+    body: dict = {"error": "Internal server error"}
+    if detail:
+        body["detail"] = detail
+    return JSONResponse(status_code=500, content=body)
 
 
 @app.get("/")

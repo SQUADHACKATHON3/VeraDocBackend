@@ -83,6 +83,7 @@ class Settings(BaseSettings):
 
     otp_ttl_minutes: int = 10
     otp_resend_cooldown_seconds: int = 60
+    otp_max_attempts: int = 5
 
 
 settings = Settings()  # type: ignore[call-arg]

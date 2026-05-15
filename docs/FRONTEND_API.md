@@ -13,6 +13,8 @@ Base URL: use your deployed API origin (e.g. `https://api.example.com`). Local d
 
 ## 1. Authentication
 
+> **Full reference:** [`docs/AUTH_API.md`](AUTH_API.md) — Google OAuth, email OTP, forgot/reset password, env vars, security behaviour, and frontend flow diagrams.
+
 ### 1.1 Register
 
 `POST /api/auth/register`  

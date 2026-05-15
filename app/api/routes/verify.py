@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_verified_user, get_verified_user
 from app.api.squad_webhook_handler import handle_squad_charge_webhook
 from app.models.user import User
 from app.models.verification import PaymentStatus, Verification, VerificationStatus
@@ -52,7 +52,7 @@ def _upload_type_allowed(declared: str | None, filename: str | None, file_head: 
 async def initiate(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
 ) -> InitiateOut:
     head = await file.read(8)

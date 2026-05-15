@@ -46,3 +46,12 @@ def get_current_user(db: Session = Depends(get_db), token: str | None = Depends(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     return user
 
+
+def get_verified_user(user: User = Depends(get_current_user)) -> User:
+    """Require a verified email before paid or sensitive actions."""
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required. Check your inbox or POST /api/auth/resend-otp.",
+        )
+    return user

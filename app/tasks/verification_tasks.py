@@ -1,17 +1,29 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
+from app.models.user import User
 from app.models.verification import Verdict, Verification, VerificationStatus
 from app.services.groq_analyzer import analyze_document
 from app.services.storage import read_storage_key
 
 
+def _refund_credit(db: Session, user_id: UUID) -> None:
+    u = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    if u:
+        u.credits += 1
+        db.add(u)
+
+
 def _run(db: Session, verification_id: UUID) -> None:
     v = db.get(Verification, verification_id)
     if not v:
+        return
+
+    if v.status == VerificationStatus.complete:
         return
 
     v.status = VerificationStatus.processing
@@ -31,6 +43,7 @@ def _run(db: Session, verification_id: UUID) -> None:
     except Exception as e:
         v.status = VerificationStatus.error
         v.ai_output = {"error": "AI analysis failed", "detail": str(e)}
+        _refund_credit(db, v.user_id)
     finally:
         db.add(v)
         db.commit()

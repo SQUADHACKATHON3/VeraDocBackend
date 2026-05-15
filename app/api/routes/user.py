@@ -20,6 +20,16 @@ def change_password(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    if not user.password_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="This account uses Google sign-in. Set a password via forgot-password if needed.",
+        )
+    if not user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account uses Google sign-in. Set a password via forgot-password if needed.",
+        )
     if not verify_password(payload.currentPassword, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
     user.password_hash = hash_password(payload.newPassword)

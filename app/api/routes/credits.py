@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_verified_user
 from app.core.config import settings
 from app.models.credit_purchase import CreditPurchase, CreditPurchaseStatus
 from app.models.user import User
@@ -16,7 +16,11 @@ from app.schemas.credits import (
     CreditPurchaseVerifyOut,
 )
 from app.services.credit_purchase_completion import complete_pending_credit_purchase_by_id
-from app.services.squad import SquadClient, squad_verify_response_indicates_success
+from app.services.squad import (
+    SquadClient,
+    squad_verify_amount_kobo,
+    squad_verify_response_indicates_success,
+)
 
 router = APIRouter(prefix="/api/credits", tags=["credits"])
 
@@ -36,9 +40,15 @@ def list_packs() -> CreditPacksOut:
 @router.post("/purchase/initiate", response_model=CreditPurchaseInitiateOut)
 async def initiate_credit_purchase(
     payload: CreditPurchaseInitiateIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_verified_user),
     db: Session = Depends(get_db),
 ) -> CreditPurchaseInitiateOut:
+    if not settings.squad_callback_url:
+        raise HTTPException(
+            status_code=503,
+            detail="Squad checkout is not configured: set SQUAD_CALLBACK_URL on the server.",
+        )
+
     credits = int(payload.pack)
     if credits not in _PACKS:
         raise HTTPException(status_code=400, detail="Invalid pack. Choose 1, 5, 10, or 20 credits.")
@@ -54,14 +64,6 @@ async def initiate_credit_purchase(
     db.add(purchase)
     db.commit()
     db.refresh(purchase)
-
-    if not settings.squad_callback_url:
-        raise HTTPException(
-            status_code=503,
-            detail="Squad checkout is not configured: set SQUAD_CALLBACK_URL to your frontend return URL "
-            "(e.g. https://your-app.com/credits/callback). Webhooks are configured separately in the Squad dashboard "
-            "to POST /api/verify/webhook on this API.",
-        )
 
     squad = SquadClient()
     checkout_url = await squad.initiate_transaction(
@@ -109,10 +111,20 @@ async def verify_credit_purchase(
     try:
         squad = SquadClient()
         verify_resp = await squad.verify_transaction(transaction_ref=str(purchase_id))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Squad verify request failed: {e!s}") from e
+    except Exception:
+        raise HTTPException(status_code=502, detail="Squad verify request failed")
 
     if not squad_verify_response_indicates_success(verify_resp):
+        return CreditPurchaseVerifyOut(
+            purchaseId=p.id,
+            status=p.status.value,
+            credits=p.credits_granted,
+            paymentConfirmed=False,
+            alreadyCompleted=False,
+        )
+
+    paid = squad_verify_amount_kobo(verify_resp)
+    if paid is not None and paid != p.amount_kobo:
         return CreditPurchaseVerifyOut(
             purchaseId=p.id,
             status=p.status.value,

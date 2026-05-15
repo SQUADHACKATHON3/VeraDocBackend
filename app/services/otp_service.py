@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import enum
 import hashlib
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -13,8 +15,16 @@ from app.core.config import settings
 from app.models.otp_code import OtpCode, OtpType
 
 
+class OtpVerifyResult(str, enum.Enum):
+    ok = "ok"
+    invalid = "invalid"
+    expired = "expired"
+    locked = "locked"
+
+
 def _hash_code(code: str) -> str:
-    return hashlib.sha256(code.encode()).hexdigest()
+    pepper = settings.jwt_secret.encode("utf-8")
+    return hmac.new(pepper, code.encode(), hashlib.sha256).hexdigest()
 
 
 def create_otp(
@@ -39,6 +49,7 @@ def create_otp(
         otp_type=otp_type,
         code_hash=_hash_code(code),
         expires_at=expires_at,
+        failed_attempts=0,
     )
     db.add(row)
     db.commit()
@@ -50,7 +61,8 @@ def get_last_otp_created_at(
 ) -> datetime | None:
     row = db.scalar(
         select(OtpCode).where(
-            OtpCode.email == email, OtpCode.otp_type == otp_type
+            OtpCode.email == email,
+            OtpCode.otp_type == otp_type,
         )
     )
     return row.created_at if row else None
@@ -62,8 +74,7 @@ def verify_and_consume_otp(
     email: str,
     otp_type: OtpType,
     code: str,
-) -> bool:
-    """Returns True and deletes the row if valid; False otherwise."""
+) -> OtpVerifyResult:
     row = db.scalar(
         select(OtpCode).where(
             OtpCode.email == email,
@@ -71,11 +82,30 @@ def verify_and_consume_otp(
         )
     )
     if not row:
-        return False
-    if row.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-        return False
-    if row.code_hash != _hash_code(code):
-        return False
+        return OtpVerifyResult.invalid
+
+    now = datetime.now(timezone.utc)
+    expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
+    if expires < now:
+        db.delete(row)
+        db.commit()
+        return OtpVerifyResult.expired
+
+    if row.failed_attempts >= settings.otp_max_attempts:
+        db.delete(row)
+        db.commit()
+        return OtpVerifyResult.locked
+
+    if not hmac.compare_digest(row.code_hash, _hash_code(code)):
+        row.failed_attempts += 1
+        if row.failed_attempts >= settings.otp_max_attempts:
+            db.delete(row)
+            db.commit()
+            return OtpVerifyResult.locked
+        db.add(row)
+        db.commit()
+        return OtpVerifyResult.invalid
+
     db.delete(row)
     db.commit()
-    return True
+    return OtpVerifyResult.ok

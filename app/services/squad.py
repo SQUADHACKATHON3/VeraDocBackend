@@ -43,13 +43,35 @@ class SquadClient:
             return resp.json()
 
 
-def squad_verify_response_indicates_success(verify_resp: dict[str, Any]) -> bool:
-    """True if Squad transaction verify payload reports a successful payment."""
+def _squad_verify_data(verify_resp: dict[str, Any]) -> dict[str, Any]:
     data = verify_resp.get("data")
     if not isinstance(data, dict):
         data = verify_resp if isinstance(verify_resp, dict) else {}
-    status_value = data.get("transaction_status")
+    return data
+
+
+def squad_verify_response_indicates_success(verify_resp: dict[str, Any]) -> bool:
+    """True if Squad transaction verify payload reports a successful payment."""
+    status_value = _squad_verify_data(verify_resp).get("transaction_status")
     return str(status_value).lower() == "success"
+
+
+def squad_verify_amount_kobo(verify_resp: dict[str, Any]) -> int | None:
+    """Paid amount in kobo from Squad verify response, if present."""
+    raw = _squad_verify_data(verify_resp).get("amount")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def squad_payment_matches_purchase(verify_resp: dict[str, Any], *, expected_kobo: int) -> bool:
+    if not squad_verify_response_indicates_success(verify_resp):
+        return False
+    paid = squad_verify_amount_kobo(verify_resp)
+    return paid is not None and paid == expected_kobo
 
 
 def squad_webhook_hmac_hex_upper(raw_body: bytes) -> str:

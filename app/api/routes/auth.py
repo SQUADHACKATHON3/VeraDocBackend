@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
@@ -27,6 +27,7 @@ from app.schemas.auth import (
 )
 from app.services.email_service import send_otp_email
 from app.services.otp_service import (
+    OtpVerifyResult,
     create_otp,
     get_last_otp_created_at,
     verify_and_consume_otp,
@@ -116,6 +117,8 @@ def google_login() -> dict:
     if not settings.google_client_id or not settings.google_redirect_uri:
         raise HTTPException(status_code=503, detail="Google OAuth is not configured on this server.")
     import urllib.parse
+
+    state = create_access_token("oauth", expires_minutes=10, extra={"purpose": "google_oauth"})
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": settings.google_redirect_uri,
@@ -123,16 +126,30 @@ def google_login() -> dict:
         "scope": "openid email profile",
         "access_type": "offline",
         "prompt": "select_account",
+        "state": state,
     }
     url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     return {"url": url}
 
 
 @router.get("/google/callback")
-async def google_callback(code: str, db: Session = Depends(get_db)) -> RedirectResponse:
+async def google_callback(
+    code: str,
+    state: str | None = None,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
     """Exchange code for tokens, upsert user, redirect to frontend with JWT tokens."""
     if not settings.google_client_id or not settings.google_client_secret or not settings.google_redirect_uri:
         raise HTTPException(status_code=503, detail="Google OAuth is not configured on this server.")
+
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth state")
+    try:
+        state_payload = jwt.decode(state, settings.jwt_secret, algorithms=["HS256"])
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    if state_payload.get("purpose") != "google_oauth":
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
     import httpx as _httpx
 
@@ -168,15 +185,30 @@ async def google_callback(code: str, db: Session = Depends(get_db)) -> RedirectR
     google_id: str = info["sub"]
     email: str = info["email"]
     name: str = info.get("name") or email.split("@")[0]
+    if not info.get("email_verified", True):
+        raise HTTPException(status_code=400, detail="Google email is not verified")
 
-    # Upsert user: match by google_id first, then by email
     user = db.scalar(select(User).where(User.google_id == google_id))
     if not user:
-        user = db.scalar(select(User).where(User.email == email))
+        existing = db.scalar(select(User).where(User.email == email))
+        if existing:
+            if existing.google_id and existing.google_id != google_id:
+                raise HTTPException(status_code=409, detail="Email already linked to another Google account")
+            if existing.password_hash and not existing.email_verified:
+                raise HTTPException(
+                    status_code=409,
+                    detail="An account with this email exists but is not verified. Verify your email or use forgot-password before using Google sign-in.",
+                )
+            user = existing
+            user.google_id = google_id
+            user.email_verified = True
+        else:
+            user = None
+
     if user:
         user.google_id = google_id
         user.email_verified = True
-    else:
+    elif user is None:
         user = User(
             name=name,
             organisation="",
@@ -211,10 +243,12 @@ def verify_email(
 ) -> dict:
     if user.email_verified:
         return {"message": "Email already verified"}
-    ok = verify_and_consume_otp(
+    result = verify_and_consume_otp(
         db, email=user.email, otp_type=OtpType.email_verification, code=payload.otp
     )
-    if not ok:
+    if result == OtpVerifyResult.locked:
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Request a new code.")
+    if result != OtpVerifyResult.ok:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     user.email_verified = True
     db.add(user)
@@ -280,10 +314,12 @@ def reset_password(
     if len(payload.newPassword) < 8:
         raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
 
-    ok = verify_and_consume_otp(
+    result = verify_and_consume_otp(
         db, email=payload.email, otp_type=OtpType.password_reset, code=payload.otp
     )
-    if not ok:
+    if result == OtpVerifyResult.locked:
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Request a new code.")
+    if result != OtpVerifyResult.ok:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     user = db.scalar(select(User).where(User.email == payload.email))
