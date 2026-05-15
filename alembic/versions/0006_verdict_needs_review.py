@@ -31,6 +31,10 @@ def upgrade() -> None:
     # 1. Add the new enum value.
     op.execute("ALTER TYPE verdict ADD VALUE IF NOT EXISTS 'NEEDS REVIEW'")
 
+    # PostgreSQL requires us to commit the transaction before a newly added enum
+    # value can be used in the same session.
+    op.execute("COMMIT")
+
     # 2. Migrate existing rows.
     op.execute(
         "UPDATE verifications SET verdict = 'NEEDS REVIEW' WHERE verdict = 'SUSPICIOUS'"
