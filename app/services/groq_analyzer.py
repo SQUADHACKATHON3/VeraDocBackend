@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+from datetime import date
 from typing import Any, Literal
 
 from groq import Groq
@@ -79,7 +80,9 @@ over AUTHENTIC without strong cross-field consistency.
 def _forensic_system_prompt() -> str:
     code = (settings.verification_primary_region or "NG").strip().upper()
     region = _REGION_BLOCK_NG if code == "NG" else _REGION_BLOCK_GENERAL
-    return f"{_FORENSIC_PROMPT_BASE}\n\n{region}"
+    today_str = date.today().strftime("%B %d, %Y")
+    current_date_ctx = f"CRITICAL CONTEXT: Today's date is {today_str}. Do not flag dates up to {today_str} as being in the future."
+    return f"{_FORENSIC_PROMPT_BASE}\n\n{region}\n\n{current_date_ctx}"
 
 
 def _entity_extraction_prompt() -> str:
