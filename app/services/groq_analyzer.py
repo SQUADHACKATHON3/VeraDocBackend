@@ -153,13 +153,16 @@ Also produce suggested_outreach_message in the SAME JSON response (one model cal
 - End with placeholder lines exactly: [Your full name] then [Your email or phone] on separate lines.
 - Length: roughly 120–450 words.
 
+- "flags": Must be a list of strings detailing ONLY negative anomalies, warnings, or suspicious signals. MUST be an empty list [] if the document is 100% authentic.
+- "passed_checks": Must be a list of strings detailing the positive checks that passed and confirm authenticity (e.g., "Seal and watermark presence", "Valid date format", etc.).
+
 Output ONLY this JSON shape (no markdown):
 
 {{
   "verdict": "AUTHENTIC" or "NEEDS REVIEW" or "FAKE",
   "trust_score": 0-100,
-  "flags": ["only negative anomalies or suspicious signals; MUST be empty if document is 100% authentic"],
-  "passed_checks": ["positive checks that passed and confirm authenticity"],
+  "flags": ["string", "string"],
+  "passed_checks": ["string", "string"],
   "summary": "one sentence",
   "suggested_outreach_message": "Subject: ...\\n\\nDear ...\\n\\n...\\n\\n[Your full name]\\n[Your email or phone]"
 }}
