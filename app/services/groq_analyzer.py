@@ -1,7 +1,7 @@
 import base64
 import io
 import json
-from typing import Any
+from typing import Any, Literal
 
 from groq import Groq
 from pdf2image import convert_from_bytes
