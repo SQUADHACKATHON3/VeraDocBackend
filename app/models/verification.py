@@ -25,7 +25,7 @@ class VerificationStatus(str, enum.Enum):
 
 class Verdict(str, enum.Enum):
     AUTHENTIC = "AUTHENTIC"
-    SUSPICIOUS = "SUSPICIOUS"
+    NEEDS_REVIEW = "NEEDS REVIEW"
     FAKE = "FAKE"
 
 

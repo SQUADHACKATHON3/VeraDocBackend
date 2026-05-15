@@ -6,7 +6,7 @@ import re
 from typing import Any, Literal
 
 # Only surface web-parsed contacts when the model is uncertain enough to warrant issuer follow-up.
-ISSUER_HINTS_VERDICT = "SUSPICIOUS"
+ISSUER_HINTS_VERDICT = "NEEDS REVIEW"
 ISSUER_HINTS_MIN_TRUST = 45
 ISSUER_HINTS_MAX_TRUST = 70
 
@@ -191,7 +191,7 @@ def build_issuer_contact_hints(
 
     out: dict[str, Any] = {
         "included": True,
-        "trigger": f"{ISSUER_HINTS_VERDICT.lower()}_{ISSUER_HINTS_MIN_TRUST}_{ISSUER_HINTS_MAX_TRUST}_trust",
+        "trigger": f"needs_review_{ISSUER_HINTS_MIN_TRUST}_{ISSUER_HINTS_MAX_TRUST}_trust",
         "unverified": True,
         "disclaimer": (
             "These contacts were parsed from web search snippets. They are not verified by VeraDoc. "

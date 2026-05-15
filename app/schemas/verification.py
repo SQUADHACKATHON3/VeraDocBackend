@@ -43,7 +43,7 @@ class IssuerContactItemOut(BaseModel):
 
 
 class IssuerContactHintsOut(BaseModel):
-    """Web-derived issuer contacts; only populated for SUSPICIOUS + mid trust band when Tavily ran."""
+    """Web-derived issuer contacts; only populated for NEEDS REVIEW + mid trust band when Tavily ran."""
 
     included: bool
     trigger: str
