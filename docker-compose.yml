@@ -1,4 +1,4 @@
-# VeraDoc stack: Postgres + FastAPI (verification runs in-process via BackgroundTasks).
+# VeraDoc stack: Postgres + Django REST Framework (verification runs in-process via background threads).
 # 1) cp .env.example .env  and fill secrets (JWT_SECRET, GROQ_API_KEY, SQUAD_SECRET_KEY, …)
 # 2) docker compose up --build
 # 3) API: http://localhost:8000  — set SQUAD_CALLBACK_URL to your frontend after-pay page (e.g. http://localhost:3000/credits/callback). In Squad dashboard, set the webhook to this API's POST /api/verify/webhook (public HTTPS, e.g. ngrok).
@@ -34,8 +34,8 @@ services:
       postgres:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      sh -c "python manage.py migrate --noinput &&
+      gunicorn veradoc.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 4 --timeout 120"
 
 volumes:
   postgres_data:
