@@ -21,4 +21,4 @@ COPY services/ ./services/
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 
-CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn veradoc.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4 --timeout 120"]
+CMD ["sh", "-c", "python manage.py migrate --fake-initial --noinput && exec gunicorn veradoc.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4 --timeout 120"]

@@ -34,7 +34,7 @@ services:
       postgres:
         condition: service_healthy
     command: >
-      sh -c "python manage.py migrate --noinput &&
+      sh -c "python manage.py migrate --fake-initial --noinput &&
       gunicorn veradoc.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 4 --timeout 120"
 
 volumes:
