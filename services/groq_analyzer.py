@@ -458,6 +458,11 @@ def _build_search_queries(entities: dict[str, Any]) -> list[str]:
     if region and region.lower() not in ("nigeria", "ng") and inst:
         qs.append(f"\"{inst}\" {region} education official")
 
+    # 7. Guaranteed fallback if entity extraction returned no institution/doc/serial info
+    if not qs:
+        fallback_term = "academic certificate transcript verification Nigeria" if ng else "academic credential verification official"
+        qs.append(fallback_term)
+
     # Dedupe preserving order; use query string as key for dict specs too.
     seen: set[str] = set()
     out: list[str] = []
