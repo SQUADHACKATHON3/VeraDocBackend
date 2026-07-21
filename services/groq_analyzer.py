@@ -287,9 +287,36 @@ def _parse_json_object(text: str) -> dict[str, Any]:
         return json.loads(text[start : end + 1])
 
 
+_VISION_FALLBACK_MODELS = [
+    "llama-3.2-11b-vision-preview",
+    "llama-3.2-90b-vision-preview",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
+
+
+def _call_groq_with_fallback(client: Groq, **kwargs) -> Any:
+    preferred = getattr(settings, "GROQ_MODEL", "llama-3.2-11b-vision-preview")
+    candidates = [preferred] + [m for m in _VISION_FALLBACK_MODELS if m != preferred]
+
+    last_exc = None
+    for model_name in candidates:
+        try:
+            return client.chat.completions.create(model=model_name, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            err_msg = str(exc).lower()
+            if any(k in err_msg for k in ("model_not_found", "does not exist", "404", "not support image input", "invalid_request_error")):
+                continue
+            raise exc
+
+    if last_exc:
+        raise last_exc
+
+
 def _forensic_vision(client: Groq, *, base64_jpeg: str) -> dict[str, Any]:
-    resp = client.chat.completions.create(
-        model=settings.GROQ_MODEL,
+    resp = _call_groq_with_fallback(
+        client,
         messages=[
             {"role": "system", "content": _forensic_system_prompt()},
             {
@@ -309,8 +336,8 @@ def _forensic_vision(client: Groq, *, base64_jpeg: str) -> dict[str, Any]:
 
 
 def _extract_entities_vision(client: Groq, *, base64_jpeg: str) -> dict[str, Any]:
-    resp = client.chat.completions.create(
-        model=settings.GROQ_MODEL,
+    resp = _call_groq_with_fallback(
+        client,
         messages=[
             {"role": "system", "content": _entity_extraction_prompt()},
             {
@@ -425,8 +452,8 @@ Web search snippets (may be incomplete):
 {web_blob}
 
 Produce the final merged JSON verdict."""
-    resp = client.chat.completions.create(
-        model=settings.GROQ_MODEL,
+    resp = _call_groq_with_fallback(
+        client,
         messages=[
             {"role": "system", "content": _merge_system_prompt()},
             {"role": "user", "content": user_text},

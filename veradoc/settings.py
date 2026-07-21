@@ -111,7 +111,7 @@ SQUAD_CALLBACK_URL = os.environ.get("SQUAD_CALLBACK_URL") or None
 CREDIT_PRICE_KOBO = int(os.environ.get("CREDIT_PRICE_KOBO", "70000"))
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.2-11b-vision-preview")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY") or None
 
 FILE_STORAGE_DRIVER = os.environ.get("FILE_STORAGE_DRIVER", "local")
