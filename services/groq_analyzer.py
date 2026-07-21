@@ -290,6 +290,9 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 _VISION_FALLBACK_MODELS = [
     "llama-3.2-11b-vision-preview",
     "llama-3.2-90b-vision-preview",
+]
+
+_TEXT_FALLBACK_MODELS = [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
 ]
@@ -297,16 +300,47 @@ _VISION_FALLBACK_MODELS = [
 
 def _call_groq_with_fallback(client: Groq, **kwargs) -> Any:
     preferred = getattr(settings, "GROQ_MODEL", "llama-3.2-11b-vision-preview")
-    candidates = [preferred] + [m for m in _VISION_FALLBACK_MODELS if m != preferred]
+    has_image = False
+    for m in kwargs.get("messages", []):
+        if isinstance(m.get("content"), list):
+            has_image = True
+            break
+
+    if has_image:
+        v_candidates = [m for m in [preferred] + _VISION_FALLBACK_MODELS if "vision" in m.lower() or m in _VISION_FALLBACK_MODELS]
+        candidates = v_candidates + [m for m in [preferred] + _TEXT_FALLBACK_MODELS if m not in v_candidates]
+    else:
+        candidates = [preferred] + [m for m in _TEXT_FALLBACK_MODELS + _VISION_FALLBACK_MODELS if m != preferred]
+
+    seen = set()
+    deduped: list[str] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            deduped.append(c)
 
     last_exc = None
-    for model_name in candidates:
+    for model_name in deduped:
+        call_kwargs = dict(kwargs)
+        call_kwargs["model"] = model_name
+
+        is_vision_model = "vision" in model_name.lower() or model_name in _VISION_FALLBACK_MODELS
+        if has_image and not is_vision_model:
+            sanitized = []
+            for msg in call_kwargs.get("messages", []):
+                m_copy = dict(msg)
+                if isinstance(m_copy.get("content"), list):
+                    texts = [item.get("text", "") for item in m_copy["content"] if isinstance(item, dict) and item.get("type") == "text"]
+                    m_copy["content"] = "\n".join(t for t in texts if t) or "Analyze this document."
+                sanitized.append(m_copy)
+            call_kwargs["messages"] = sanitized
+
         try:
-            return client.chat.completions.create(model=model_name, **kwargs)
+            return client.chat.completions.create(**call_kwargs)
         except Exception as exc:
             last_exc = exc
             err_msg = str(exc).lower()
-            if any(k in err_msg for k in ("model_not_found", "does not exist", "404", "not support image input", "invalid_request_error")):
+            if any(k in err_msg for k in ("content must be a string", "model_not_found", "does not exist", "404", "not support image", "invalid_request_error", "400")):
                 continue
             raise exc
 
