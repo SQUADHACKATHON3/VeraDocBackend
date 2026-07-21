@@ -21,3 +21,11 @@ class User(models.Model):
 
     def __str__(self) -> str:
         return self.email
+
+    @property
+    def is_authenticated(self) -> bool:
+        return True
+
+    @property
+    def is_anonymous(self) -> bool:
+        return False

@@ -29,6 +29,7 @@ if os.environ.get("DATABASE_URL"):
     os.environ["DATABASE_URL"] = _database_url()
 
 SECRET_KEY = os.environ.get("JWT_SECRET", "change-me-in-production")
+AUTH_USER_MODEL = "accounts.User"
 DEBUG = os.environ.get("ENV", "local").lower() == "local"
 ALLOWED_HOSTS = ["*"]
 
