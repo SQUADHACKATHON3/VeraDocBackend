@@ -19,6 +19,9 @@ class User(models.Model):
     class Meta:
         db_table = "users"
 
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS: list[str] = []
+
     def __str__(self) -> str:
         return self.email
 
@@ -29,3 +32,21 @@ class User(models.Model):
     @property
     def is_anonymous(self) -> bool:
         return False
+
+    @property
+    def is_staff(self) -> bool:
+        return False
+
+    @property
+    def is_active(self) -> bool:
+        return True
+
+    @property
+    def is_superuser(self) -> bool:
+        return False
+
+    def get_full_name(self) -> str:
+        return self.name
+
+    def get_short_name(self) -> str:
+        return self.name
