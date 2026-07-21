@@ -1,7 +1,11 @@
+import logging
+
 from django.conf import settings
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
+
+logger = logging.getLogger(__name__)
 
 
 def custom_exception_handler(exc, context):
@@ -24,9 +28,9 @@ def custom_exception_handler(exc, context):
                     response.data = {"detail": data}
         return response
 
-    if settings.DEBUG:
-        return Response(
-            {"error": "Internal server error", "detail": str(exc)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-    return Response({"error": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    logger.exception("Unhandled 500 error in API request: %s", exc)
+    return Response(
+        {"error": "Internal server error", "detail": str(exc)},
+        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
+

@@ -118,11 +118,14 @@ def initiate(request):
         u.credits -= 1
         u.save(update_fields=["credits"])
 
+        doc_name = (file.name or "document")[:255]
+        effective_mime_safe = effective_mime[:100]
+
         verification = Verification.objects.create(
             user=u,
-            document_name=file.name or "document",
+            document_name=doc_name,
             storage_key=storage_key,
-            content_type=effective_mime,
+            content_type=effective_mime_safe,
             size_bytes=size_bytes,
             squad_transaction_ref=None,
             payment_status=PaymentStatus.PAID,

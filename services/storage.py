@@ -46,8 +46,17 @@ def _decode_cloudinary_ref(storage_key: str) -> dict[str, str] | None:
 
 def ensure_local_storage_dir() -> Path:
     p = Path(settings.LOCAL_STORAGE_DIR)
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        test_file = p / f".write_test_{uuid.uuid4().hex}"
+        test_file.touch()
+        test_file.unlink()
+        return p
+    except Exception:
+        import tempfile
+        tmp = Path(tempfile.gettempdir()) / "veradoc_storage"
+        tmp.mkdir(parents=True, exist_ok=True)
+        return tmp
 
 
 def save_upload_locally(upload: UploadedFile) -> tuple[str, int]:
@@ -87,8 +96,12 @@ def save_upload_cloudinary(upload: UploadedFile) -> tuple[str, int]:
 
 def save_upload(upload: UploadedFile) -> tuple[str, int]:
     driver = (settings.FILE_STORAGE_DRIVER or "local").lower()
-    if driver == "cloudinary":
-        return save_upload_cloudinary(upload)
+    if driver == "cloudinary" and getattr(settings, "CLOUDINARY_URL", None):
+        try:
+            return save_upload_cloudinary(upload)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Cloudinary upload failed, falling back to local/tmp storage: %s", exc)
     return save_upload_locally(upload)
 
 
