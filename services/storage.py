@@ -92,21 +92,21 @@ def save_upload(upload: UploadedFile) -> tuple[str, int]:
     return save_upload_locally(upload)
 
 
-def _build_cloudinary_signed_url(public_id: str, meta: dict[str, str]) -> str:
-    from cloudinary.utils import cloudinary_url
+def _build_cloudinary_delivery_url(public_id: str, meta: dict[str, str]) -> str:
+    from cloudinary import config as cld_config
 
-    kwargs: dict = {
-        "resource_type": meta["r"],
-        "secure": True,
-        "sign_url": True,
-        "long_url_signature": True,
-        "type": "upload",
-    }
-    if meta.get("v"):
-        kwargs["version"] = int(meta["v"])
-    if meta.get("f"):
-        kwargs["format"] = meta["f"]
-    url, _ = cloudinary_url(public_id, **kwargs)
+    cfg = cld_config()
+    cloud_name = cfg.cloud_name
+    resource_type = meta.get("r", "image")
+    version = meta.get("v")
+    fmt = meta.get("f")
+
+    url = f"https://res.cloudinary.com/{cloud_name}/{resource_type}/upload"
+    if version:
+        url += f"/v{version}"
+    url += f"/{public_id}"
+    if fmt:
+        url += f".{fmt}"
     return url
 
 
@@ -141,7 +141,7 @@ def read_storage_key(storage_key: str) -> bytes:
         last_body: str = ""
         last_cld_err: str = ""
         for attempt in _cloudinary_fetch_attempt_metas(meta):
-            url = _build_cloudinary_signed_url(public_id, attempt)
+            url = _build_cloudinary_delivery_url(public_id, attempt)
             with httpx.Client(timeout=120.0, follow_redirects=True) as client:
                 r = client.get(url, headers={"User-Agent": "VeraDocBackend/1.0"})
             if r.status_code == 200:

@@ -455,7 +455,16 @@ def analyze_document(*, filename: str, content_type: str, file_bytes: bytes) -> 
     base64_jpeg = _image_base64_from_upload(filename=filename, content_type=content_type, file_bytes=file_bytes)
     client = Groq(api_key=settings.GROQ_API_KEY)
 
-    forensic = _forensic_vision(client, base64_jpeg=base64_jpeg)
+    try:
+        forensic = _forensic_vision(client, base64_jpeg=base64_jpeg)
+    except Exception as exc:
+        msg = str(exc)
+        if "does not support image input" in msg.lower() or "image input" in msg.lower():
+            raise RuntimeError(
+                "The configured Groq model does not support image input. "
+                "Update GROQ_MODEL to a vision-capable model (e.g. meta-llama/llama-4-maverick-17b-128k-instruct)."
+            ) from exc
+        raise
 
     tavily_key = (settings.TAVILY_API_KEY or "").strip()
     if not tavily_key:
